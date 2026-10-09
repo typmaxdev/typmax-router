@@ -7,8 +7,12 @@
 #   build-test  clang build on Ubuntu, then the synthetic, determinism and watcher
 #               suites. Determinism compares against tests/golden/responses.jsonl, so a
 #               change that moves a route is red until its golden lines are re-recorded.
-#               The fixture suite needs KiCad's demo boards (CC BY-SA, never committed)
-#               and kicad-cli, so it is not run here; it skips itself without them.
+#   build-test-macos  the same build and suites on macOS arm64 (macos-14, Apple clang):
+#               the determinism suite compares the same golden lines, so a route that
+#               differs between Linux x86_64 and macOS arm64 is red on the pull request.
+#   fixtures    KiCad's demo boards (CC BY-SA, fetched into the runner's temp
+#               directory, never committed) re-routed through the service and checked by
+#               kicad-cli from KiCad's official image at the vendored tag.
 #
 # `pull_request` (never `pull_request_target`): a fork's pull request runs with a
 # read-only token and no secrets.
@@ -59,3 +63,68 @@ jobs:
 
       - name: Test (synthetic, determinism, watcher)
         run: ctest --test-dir build --output-on-failure -R '^(synthetic|determinism|watcher)$'
+
+  build-test-macos:
+    runs-on: macos-14
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain
+        run: |
+          brew list ninja >/dev/null 2>&1 || brew install ninja
+          clang++ --version | head -1
+          cmake --version | head -1
+          python3 --version
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j "$(sysctl -n hw.ncpu)"
+
+      - name: Test (synthetic, determinism, watcher)
+        run: ctest --test-dir build --output-on-failure -R '^(synthetic|determinism|watcher)$'
+
+  fixtures:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build patch python3
+
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j "$(nproc)"
+
+      - name: Fixture boards and kicad-cli at the vendored tag
+        run: |
+          tools/fetch_fixtures.sh "$RUNNER_TEMP/fixtures"
+          tag="$(sed -n 's/^tag //p' vendor/kicad.manifest | head -1)"
+          img="$tag"; docker manifest inspect "kicad/kicad:$img" >/dev/null 2>&1 || img="${tag%.*}"
+          docker pull "kicad/kicad:$img"
+          {
+            echo "TYPMAX_FIXTURES_DIR=$RUNNER_TEMP/fixtures"
+            echo "KICAD_CLI=$GITHUB_WORKSPACE/tools/kicad_cli_docker.sh"
+            echo "TYPMAX_KICAD_CLI_IMAGE_TAG=$img"
+            echo "TYPMAX_KICAD_CLI_MOUNTS=$RUNNER_TEMP $GITHUB_WORKSPACE"
+          } >> "$GITHUB_ENV"
+
+      - name: Test (fixtures)
+        run: ctest --test-dir build --output-on-failure -R '^fixtures$'
