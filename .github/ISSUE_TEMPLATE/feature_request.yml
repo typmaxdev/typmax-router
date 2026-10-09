@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 The typmax-router authors
+name: Feature request
+description: A protocol method or field, a tool, or a build target.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do and why the current protocol or tools do not cover it.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The change you have in mind. For a protocol change, sketch the request and the answer; PROTOCOL.md's guarantees table is the contract it must keep or version.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This needs a change to KiCad's router code (vendor/), which goes through patches/ (CONTRIBUTING.md).
+        - label: This changes the protocol (PROTOCOL.md) in a way an existing client would notice.

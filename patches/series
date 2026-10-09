@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 The typmax-router authors
+#
+# Our changes to vendor/kicad/, in the order they apply: one file name per
+# line, each a unified diff with paths relative to the KiCad source root
+# (`git diff`/`git format-patch` style, a/ and b/ prefixes: applied with -p1).
+# vendor/kicad/ itself stays byte-for-byte upstream; CMake applies this series
+# to a copy in the build directory, and tools/update_kicad.sh checks every
+# patch still applies to a new release (it stops on the first one that does
+# not, named). patches/README.md says what a patch file's header must say.
+#
+# At KiCad 10.0.7: three upstream-bug fixes (arcs as shove obstacles, the
+# arc hull's margin, an obstacle order that depended on addresses); every
+# other difference from KiCad's own build is a stand-in under shim/
+# (SOURCE.md, "What is not KiCad's").
+0001-shove-search-arc-obstacles.patch
+0002-archull-margin-covers-polyline-error.patch
+0003-obstacle-order-by-item-serial.patch
+0004-virtual-vias-in-a-stable-order.patch

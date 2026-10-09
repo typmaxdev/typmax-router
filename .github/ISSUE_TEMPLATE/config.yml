@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 The typmax-router authors
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/typmaxdev/typmax-router/security/advisories/new
+    about: Please report vulnerabilities privately, never in a public issue (SECURITY.md).
+  - name: A bug in KiCad's router itself
+    url: https://gitlab.com/kicad/code/kicad/-/issues
+    about: If KiCad's own interactive router does the same thing, report it upstream too.

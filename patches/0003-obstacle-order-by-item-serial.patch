@@ -1,0 +1,157 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileCopyrightText: 2026 The typmax-router authors
+Subject: order obstacles by item creation, not by address
+Upstream-file: pcbnew/router/pns_item.h (ITEM), pcbnew/router/pns_node.h (OBSTACLE::operator<)
+Why: NODE::OBSTACLES is a std::set<OBSTACLE> ordered by the items'
+ addresses. NearestObstacle takes the first of equally near obstacles in
+ that order, and TOPOLOGY::AssembleCluster builds its walkaround cluster in
+ it, so the same request routed in two processes could answer differently
+ (macOS: 2 of 12 runs of one pic_programmer route moved a corner by 1 nm;
+ the fixture suite's replay check caught it). Every ITEM now carries a
+ serial from a process-wide counter (a copy gets a new one; an assignment
+ keeps the target's, so no two live items share one: review r3 P-1), and
+ OBSTACLE orders by the serials, keeping the addresses only as the last,
+ unreachable, tie-break.
+ Relative creation order is the same in every run, whatever the counter's
+ start, so the order is too.
+Upstream: yes, as a determinism fix (KiCad's own router-replay tooling
+ would benefit); not yet proposed.
+
+--- a/pcbnew/router/pns_item.h
++++ b/pcbnew/router/pns_item.h
+@@ -4,6 +4,10 @@
+  * Copyright (C) 2013-2017 CERN
+  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+  *
++ * Modified by the typmax-router authors, 2026-10-07: every ITEM carries a creation
++ *   serial, kept by assignment
++ *   (patches/0003-obstacle-order-by-item-serial.patch in the typmax-router repository).
++ *
+  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+  *
+  * This program is free software: you can redistribute it and/or modify it
+@@ -23,6 +27,7 @@
+ #ifndef PNS_ITEM_H
+ #define PNS_ITEM_H
+ 
++#include <atomic>
+ #include <memory>
+ #include <set>
+ #include <unordered_set>
+@@ -113,7 +118,8 @@
+         LINKED_ITEM_MASK_T = SOLID_T | SEGMENT_T | ARC_T | VIA_T | HOLE_T
+     };
+ 
+-    ITEM( PnsKind aKind )
++    ITEM( PnsKind aKind ) :
++            m_serial( nextSerial() )
+     {
+         m_net = nullptr;
+         m_movable = true;
+@@ -129,7 +135,8 @@
+         m_isCompoundShapePrimitive = false;
+     }
+ 
+-    ITEM( const ITEM& aOther )
++    ITEM( const ITEM& aOther ) :
++            m_serial( nextSerial() )
+     {
+         m_layers = aOther.m_layers;
+         m_net = aOther.m_net;
+@@ -146,9 +153,44 @@
+         m_isCompoundShapePrimitive = aOther.m_isCompoundShapePrimitive;
+     }
+ 
++    /**
++     * Assignment copies everything the implicit one did except the serial: the target
++     * stays the item it was (its place in serial-ordered containers), so no two live
++     * items share a serial and OBSTACLE never needs its address tie-break.
++     */
++    ITEM& operator=( const ITEM& aOther )
++    {
++        if( this == &aOther )
++            return *this;
++
++        OWNABLE_ITEM::operator=( aOther );
++        ITEM_OWNER::operator=( aOther );
++        m_kind = aOther.m_kind;
++        m_parent = aOther.m_parent;
++        m_sourceItem = aOther.m_sourceItem;
++        m_layers = aOther.m_layers;
++        m_movable = aOther.m_movable;
++        m_net = aOther.m_net;
++        m_marker = aOther.m_marker;
++        m_rank = aOther.m_rank;
++        m_routable = aOther.m_routable;
++        m_isVirtual = aOther.m_isVirtual;
++        m_isFreePad = aOther.m_isFreePad;
++        m_isCompoundShapePrimitive = aOther.m_isCompoundShapePrimitive;
++        return *this;
++    }
++
+     virtual ~ITEM();
+ 
+     /**
++     * A number that orders items by creation (a copy is a new item; an assignment keeps
++     * the target's). Unlike the item's
++     * address, it does not depend on where the allocator put the item, so containers
++     * ordered by it iterate the same way in every run.
++     */
++    uint64_t Serial() const { return m_serial; }
++
++    /**
+      * Return a deep copy of the item.
+      */
+     virtual ITEM* Clone() const = 0;
+@@ -313,6 +355,13 @@
+                         COLLISION_SEARCH_CONTEXT* aCtx ) const;
+ 
+ protected:
++    static uint64_t nextSerial()
++    {
++        static std::atomic<uint64_t> s_next{ 0 };
++        return s_next.fetch_add( 1, std::memory_order_relaxed ) + 1;
++    }
++
++    uint64_t        m_serial;
+     PnsKind         m_kind;
+     BOARD_ITEM*     m_parent;       // The parent BOARD_ITEM, used when there is a 1:1 map
+                                     //   between the PNS::ITEM and the BOARD_ITEM.
+--- a/pcbnew/router/pns_node.h
++++ b/pcbnew/router/pns_node.h
+@@ -4,6 +4,10 @@
+  * Copyright (C) 2013-2014 CERN
+  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+  *
++ * Modified by the typmax-router authors, 2026-10-07: OBSTACLE orders by item serial,
++ *   not by address
++ *   (patches/0003-obstacle-order-by-item-serial.patch in the typmax-router repository).
++ *
+  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+  *
+  * This program is free software: you can redistribute it and/or modify it
+@@ -102,11 +106,19 @@
+ 
+     bool operator<(const OBSTACLE& other) const
+     {
+-        if( (uintptr_t)m_head < (uintptr_t)other.m_head )
+-            return true;
+-        else if ( m_head == other.m_head )
+-            return (uintptr_t)m_item < (uintptr_t)other.m_item;
+-        return false;
++        // Order by creation, not by address: the address order changes from run to run
++        // (ASLR, allocator state), and with it which of two equally near obstacles
++        // NearestObstacle and the cluster walk take first. No two live items share a
++        // serial (assignment keeps the target's), so the address comparison below is
++        // only a total order's formality.
++        auto key = []( const ITEM* i ) -> uint64_t { return i ? i->Serial() : 0; };
++        if( key( m_head ) != key( other.m_head ) )
++            return key( m_head ) < key( other.m_head );
++        if( key( m_item ) != key( other.m_item ) )
++            return key( m_item ) < key( other.m_item );
++        if( m_head != other.m_head )
++            return (uintptr_t)m_head < (uintptr_t)other.m_head;
++        return (uintptr_t)m_item < (uintptr_t)other.m_item;
+     }
+ };
+ 

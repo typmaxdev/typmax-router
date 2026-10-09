@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 The typmax-router authors
+/build/
+/build-*/
+/out/
+*.o
+__pycache__/
+# Third-party test boards (CC BY-SA 4.0) are never committed: see README.md
+/fixtures/
+*.kicad_pcb
+*.kicad_pro
+*.kicad_prl
+build.log
+# tools/kicad_watch.sh's log, lock and reports (an update branch commits its own report)
+/reports/*
+!/reports/README.md

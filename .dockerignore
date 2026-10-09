@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 The typmax-router authors
+build
+build-*
+fixtures
+.git
+*.kicad_pcb

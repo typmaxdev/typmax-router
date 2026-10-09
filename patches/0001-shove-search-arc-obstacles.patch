@@ -1,0 +1,37 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileCopyrightText: 2026 The typmax-router authors
+Subject: shove: search for arc obstacles too
+Upstream-file: pcbnew/router/pns_shove.cpp (SHOVE::shoveIteration)
+Why: shoveIteration looks for the nearest obstacle by kind, in the order
+ SOLID, VIA, SEGMENT, HOLE. ARC_T is in none of those masks, so an arc track
+ is never found as an obstacle: a shove route goes straight through an arc of
+ another net and the proposal violates clearance (tests/run_tests.py
+ t_arc_obstacle_shove; the synthetic "arc" board). The iteration already has
+ its ARC_T cases (onCollidingArc, the reverse-collision branch); only the
+ search misses them. Arcs are searched together with segments, as the line
+ they belong to is.
+Upstream: yes - the same line is in KiCad master (2026-10-05); not yet proposed.
+
+--- a/pcbnew/router/pns_shove.cpp
++++ b/pcbnew/router/pns_shove.cpp
+@@ -3,6 +3,10 @@
+  *
+  * Copyright (C) 2013-2014 CERN
+  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
++ *
++ * Modified by the typmax-router authors, 2026-10-07: shoveIteration also searches
++ *   for arc obstacles
++ *   (patches/0001-shove-search-arc-obstacles.patch in the typmax-router repository).
+  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+  *
+  * This program is free software: you can redistribute it and/or modify it
+@@ -1647,7 +1651,8 @@
+              iface->GetNetName( currentLine.Net() ),
+              currentLine.EndsWithVia() ? 1 : 0 ) );
+ 
+-    for( ITEM::PnsKind search_order : { ITEM::SOLID_T, ITEM::VIA_T, ITEM::SEGMENT_T, ITEM::HOLE_T } )
++    for( int search_order : { (int) ITEM::SOLID_T, (int) ITEM::VIA_T, ITEM::SEGMENT_T | ITEM::ARC_T,
++                              (int) ITEM::HOLE_T } )
+     {
+         COLLISION_SEARCH_OPTIONS opts;
+         opts.m_kindMask = search_order;

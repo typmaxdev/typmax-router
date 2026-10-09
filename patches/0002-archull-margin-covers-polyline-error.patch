@@ -1,0 +1,45 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileCopyrightText: 2026 The typmax-router authors
+Subject: ArcHull: cover the polyline's error in the hull margin
+Upstream-file: pcbnew/router/pns_utils.cpp (ArcHull)
+Why: ArcHull offsets the arc's polyline (ConvertToPolyline(ARC_LOW_DEF),
+ error up to 20 um) by the clearance plus a margin of
+ SHAPE_ARC::DefaultAccuracyForPCB() (5 um). The polyline is not the arc: its
+ chords dip inside the arc on the outer side and its vertices stand outside it
+ on the inner side, so the hull comes closer to the arc than the clearance
+ wherever that exceeds the margin. A walkaround path that follows the hull then collides
+ with the arc it walked around, the walkaround never settles, and a route
+ past an arc fails (tests/run_tests.py t_arc_obstacle: 8 um short on the
+ synthetic "arc" board). ConvertToPolyline splits its error on either side of
+ the arc, so the hull is short by at most half of it: the margin is now
+ ARC_LOW_DEF / 2 plus 1 um for integer rounding (an earlier version of this
+ patch used the whole ARC_LOW_DEF, twice the need: review r3 P-2).
+Upstream: yes - the same code is in KiCad master (2026-10-05); not yet proposed.
+
+--- a/pcbnew/router/pns_utils.cpp
++++ b/pcbnew/router/pns_utils.cpp
+@@ -3,6 +3,10 @@
+  *
+  * Copyright (C) 2013-2014 CERN
+  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
++ *
++ * Modified by the typmax-router authors, 2026-10-07: ArcHull's margin covers
++ *   its polyline's error
++ *   (patches/0002-archull-margin-covers-polyline-error.patch in the typmax-router repository).
+  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+  *
+  * This program is free software: you can redistribute it and/or modify it
+@@ -79,7 +83,12 @@
+                               2.0 * ( 1.0 - M_SQRT1_2 ) * ( r + cl ) );
+     }
+ 
+-    int d = aArc.GetWidth() / 2 + cl + SHAPE_ARC::DefaultAccuracyForPCB();
++    // The hull offsets the arc's polyline, not the arc. ConvertToPolyline splits its
++    // error on either side of the arc (vertices error/2 outside, chord midpoints
++    // error/2 inside), so on either side the hull can come up to ARC_LOW_DEF / 2
++    // closer to the arc than the clearance. The margin covers that, plus 1 um for the
++    // integer rounding of the vertices, the offsets and the miter points (each ~1 nm).
++    int d = aArc.GetWidth() / 2 + cl + ARC_LOW_DEF / 2 + pcbIUScale.mmToIU( 0.001 );
+     int x = (int) ( 2.0 / ( 1.0 + M_SQRT2 ) * d ) / 2;
+ 
+     auto line = aArc.ConvertToPolyline( ARC_LOW_DEF );

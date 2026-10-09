@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 The typmax-router authors
+#
+# The pull-request gate. GitHub-hosted runners only; no secret, a read-only token,
+# every action pinned by commit SHA (the tag in the comment; Dependabot bumps them).
+#
+#   build-test  clang build on Ubuntu, then the synthetic, determinism and watcher
+#               suites. Determinism compares against tests/golden/responses.jsonl, so a
+#               change that moves a route is red until its golden lines are re-recorded.
+#               The fixture suite needs KiCad's demo boards (CC BY-SA, never committed)
+#               and kicad-cli, so it is not run here; it skips itself without them.
+#
+# `pull_request` (never `pull_request_target`): a fork's pull request runs with a
+# read-only token and no secrets.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # clang, as the docker image and the release watch build: the golden lines are
+      # compared across clang builds only
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build patch python3
+          "$CXX" --version | head -1
+          cmake --version | head -1
+          python3 --version
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Test (synthetic, determinism, watcher)
+        run: ctest --test-dir build --output-on-failure -R '^(synthetic|determinism|watcher)$'

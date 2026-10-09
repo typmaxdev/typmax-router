@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 The typmax-router authors
+#
+# Dependabot keeps the SHA-pinned actions current (it rewrites the SHA and the
+# version comment together). The vendored KiCad code is not a package: it moves only
+# through tools/update_kicad.sh and the release watch (README.md "Updating").
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]

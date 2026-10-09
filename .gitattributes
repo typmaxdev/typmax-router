@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 The typmax-router authors
+#
+# Files whose bytes are checked (vendor/kicad.manifest's sha256 per file, the patches
+# applied to them, the golden response lines) are never line-ending converted, on any
+# platform or with any core.autocrlf setting.
+vendor/kicad/**         -text
+vendor/kicad.manifest   -text
+patches/**              -text
+tests/golden/**         -text
+tests/boards/**         -text
+*.sh                    text eol=lf
+*.py                    text eol=lf
+
+# GitHub's language statistics and diffs: KiCad's code is vendored.
+vendor/**               linguist-vendored

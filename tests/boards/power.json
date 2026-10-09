@@ -1,0 +1,109 @@
+{
+ "layers": [
+  "F.Cu",
+  "B.Cu"
+ ],
+ "outline": [
+  [
+   [
+    0,
+    0
+   ],
+   [
+    30000000,
+    0
+   ],
+   [
+    30000000,
+    20000000
+   ],
+   [
+    0,
+    20000000
+   ]
+  ]
+ ],
+ "rules": {
+  "default_class": "Default",
+  "classes": {
+   "Default": {
+    "clearance": 200000,
+    "track_width": 250000,
+    "via_diameter": 600000,
+    "via_drill": 300000
+   },
+   "Power": {
+    "clearance": 300000,
+    "track_width": 500000,
+    "via_diameter": 800000,
+    "via_drill": 400000
+   }
+  },
+  "net_classes": {
+   "VCC": "Power"
+  },
+  "edge_clearance": 300000,
+  "hole_clearance": 250000,
+  "hole_to_hole": 250000
+ },
+ "pads": [
+  {
+   "id": "P1.1",
+   "footprint": "P1",
+   "pad": "1",
+   "net": "VCC",
+   "layers": [
+    "F.Cu"
+   ],
+   "shape": "rect",
+   "position": [
+    5000000,
+    10000000
+   ],
+   "rotation": 0,
+   "size": [
+    1000000,
+    1000000
+   ],
+   "drill": null
+  },
+  {
+   "id": "P2.1",
+   "footprint": "P2",
+   "pad": "1",
+   "net": "VCC",
+   "layers": [
+    "F.Cu"
+   ],
+   "shape": "rect",
+   "position": [
+    25000000,
+    10000000
+   ],
+   "rotation": 0,
+   "size": [
+    1000000,
+    1000000
+   ],
+   "drill": null
+  }
+ ],
+ "tracks": [
+  {
+   "id": "trk-d1",
+   "net": "D",
+   "layer": "F.Cu",
+   "start": [
+    8000000,
+    10625000
+   ],
+   "end": [
+    22000000,
+    10625000
+   ],
+   "width": 250000
+  }
+ ],
+ "vias": [],
+ "keepouts": []
+}

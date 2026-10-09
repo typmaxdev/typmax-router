@@ -1,0 +1,279 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 The typmax-router authors
+#
+# The KiCad release watch. It runs on GitHub-hosted runners only (daily and by
+# hand) and needs no secret beyond the workflow's own GITHUB_TOKEN.
+#
+#   check       tools/check_kicad_release.sh; a failed fetch, or a tag list without the
+#               vendored tag, is a red job, never "current"
+#   update      on a patch release: tools/kicad_watch.sh prepares update/kicad-<tag>
+#               (re-vendor, patches, build, ctest, fixtures with kicad-cli from KiCad's
+#               docker image, golden-line diff), the linux/amd64 docker gate runs on it,
+#               and a pull request is opened with reports/kicad-<tag>.md as its body.
+#               Never merged here. Skipped, with the reason in the log, when the branch
+#               update/kicad-<tag> exists on the remote or a pull request for it exists in
+#               ANY state (open, closed or merged): a person may have edited or rejected
+#               it, so it is never re-created or force-pushed. Linux builds use clang, as
+#               the docker gate and the README's tested toolchains do.
+#   macos-gate  the same branch built on GitHub's arm64 Mac: its golden lines must be
+#               byte-identical to the Linux ones (the native clang build's and the ones
+#               recorded inside the docker image); the result is a comment on the PR.
+#   major       on a major/minor release: an issue "KiCad <tag>: port needed" with the
+#               dry-run report, opened once (deduplicated by title).
+#
+# Every action is pinned by commit SHA (the tag in the comment). Permissions are per
+# job, least privilege; the workflow default is read-only. Every ${{ }} value a script
+# reads reaches it through env:, never inside the script text. README.md "Release
+# watch" lists the repository settings this needs.
+name: kicad-watch
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kicad-watch
+  cancel-in-progress: false
+
+env:
+  TYPMAX_KICAD_CACHE: ${{ github.workspace }}/../typmax-kicad-cache
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      kind: ${{ steps.check.outputs.kind }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check for a newer stable KiCad
+        id: check
+        run: |
+          set +e
+          line="$(tools/check_kicad_release.sh)"; rc=$?
+          set -e
+          echo "$line"
+          # 0 current, 10 patch, 11 major; anything else (2 manifest, 3 fetch, 6 a tag list
+          # without the vendored tag) is a red job, never "current"
+          case "$rc" in
+            0)  echo "kind=current" >> "$GITHUB_OUTPUT" ;;
+            10) echo "kind=patch" >> "$GITHUB_OUTPUT"; echo "tag=${line#* }" >> "$GITHUB_OUTPUT" ;;
+            11) echo "kind=major" >> "$GITHUB_OUTPUT"; echo "tag=${line#* }" >> "$GITHUB_OUTPUT" ;;
+            *)  echo "::error::release check failed: $line"; exit "$rc" ;;
+          esac
+
+  update:
+    needs: check
+    if: needs.check.outputs.kind == 'patch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write        # push update/kicad-<tag>
+      pull-requests: write   # open its pull request
+    outputs:
+      pr: ${{ steps.pr.outputs.number }}
+      skip: ${{ steps.dedupe.outputs.skip }}
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      TYPMAX_WATCH_BASE: ${{ github.ref_name }}
+      # clang on Linux too: the docker gate builds with clang, and the golden lines are
+      # compared across clang builds only (Apple clang on macOS, clang on Linux)
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Skip if the branch or a pull request for this tag exists
+        id: dedupe
+        run: |
+          branch="update/kicad-$TAG"
+          skip=0
+          # the remote branch: a person may have pushed to it, or closed its pull request
+          set +e
+          git ls-remote --exit-code --heads origin "$branch" >/dev/null; rc=$?
+          set -e
+          case "$rc" in
+            0) echo "branch $branch exists on the remote; nothing to do (delete it to redo $TAG)"; skip=1 ;;
+            2) ;;  # no such branch
+            *) echo "::error::git ls-remote failed (exit $rc)"; exit 1 ;;
+          esac
+          # any pull request for the branch: open, closed or merged
+          prs="$(gh pr list --head "$branch" --state all --json number,state \
+                   --jq 'map("#\(.number) \(.state)") | join(", ")')"
+          if [ -n "$prs" ]; then
+            echo "pull request(s) for $branch: $prs; nothing to do"
+            skip=1
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
+      - name: Toolchain
+        if: steps.dedupe.outputs.skip == '0'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build patch python3
+          "$CXX" --version | head -1
+
+      - name: Fixture boards and the DRC witness (CC BY-SA boards fetched, never committed)
+        if: steps.dedupe.outputs.skip == '0'
+        run: |
+          tools/fetch_fixtures.sh "$RUNNER_TEMP/fixtures"
+          img="$TAG"; docker manifest inspect "kicad/kicad:$img" >/dev/null 2>&1 || img="${TAG%.*}"
+          docker pull "kicad/kicad:$img"
+          mkdir -p "$TYPMAX_KICAD_CACHE"
+          {
+            echo "TYPMAX_FIXTURES_DIR=$RUNNER_TEMP/fixtures"
+            echo "KICAD_CLI=$GITHUB_WORKSPACE/tools/kicad_cli_docker.sh"
+            echo "TYPMAX_KICAD_CLI_IMAGE_TAG=$img"
+            echo "TYPMAX_KICAD_CLI_MOUNTS=$RUNNER_TEMP $(cd "$TYPMAX_KICAD_CACHE" && pwd) $GITHUB_WORKSPACE"
+          } >> "$GITHUB_ENV"
+
+      - name: Prepare the update branch (tools/kicad_watch.sh)
+        if: steps.dedupe.outputs.skip == '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          set +e
+          tools/kicad_watch.sh; rc=$?
+          set -e
+          cat reports/watch.log
+          # 0: gates green; 5: the branch and the report say what failed. Both become a PR.
+          case "$rc" in 0|5) ;; *) exit "$rc" ;; esac
+
+      - name: linux/amd64 docker gate on the branch
+        if: steps.dedupe.outputs.skip == '0'
+        run: |
+          git checkout "update/kicad-$TAG"
+          set +e
+          # GOLDEN=0: the committed golden lines are the OLD release's; the image records the
+          # new ones in /build/golden.jsonl instead, compared below and on macOS
+          docker build --platform linux/amd64 --build-arg GOLDEN=0 --target build -f docker/Dockerfile \
+            -t typmax-router:update-build . > "$RUNNER_TEMP/docker.log" 2>&1
+          rc=$?
+          docker_lines="reports/kicad-$TAG.docker-golden.jsonl"
+          crc=1
+          if [ "$rc" = 0 ]; then
+            cid="$(docker create --platform linux/amd64 typmax-router:update-build)"
+            docker cp "$cid:/build/golden.jsonl" "$docker_lines"; crc=$?
+            docker rm "$cid" >/dev/null
+          fi
+          if [ "$crc" = 0 ] && cmp -s "$docker_lines" "reports/kicad-$TAG.golden.jsonl"; then same=yes; else same=no; fi
+          set -e
+          tail -20 "$RUNNER_TEMP/docker.log"
+          {
+            echo
+            echo "## linux/amd64 docker gate (Debian, clang)"
+            echo
+            echo "- docker build exit **$rc** (synthetic suite; determinism within and across processes)"
+            echo "- golden lines recorded in the image byte-identical to the native Ubuntu clang build's: **$same**"
+            echo
+            echo "The macos-gate job compares its own golden lines against both."
+          } > "$RUNNER_TEMP/docker-section.md"
+          if [ "$rc" != 0 ] || [ "$same" != yes ]; then
+            echo "::warning::docker gate exit $rc; golden lines identical to the native build: $same"
+          fi
+
+      - name: Push the branch and open the pull request (never merged here)
+        id: pr
+        if: steps.dedupe.outputs.skip == '0'
+        run: |
+          # never --force: the dedupe step found no such branch; if one appeared since, the
+          # push fails rather than overwrite someone's work
+          # the Linux golden lines ride on the branch itself (no artifact: an account's
+          # artifact quota must not decide whether a release gets reviewed); the macos-gate
+          # job compares against them from its checkout
+          git checkout "update/kicad-$TAG"
+          files=""
+          for f in "reports/kicad-$TAG.golden.jsonl" "reports/kicad-$TAG.docker-golden.jsonl"; do
+            [ -f "$f" ] && files="$files $f"
+          done
+          if [ -n "$files" ]; then
+            git add -f $files
+            git commit --quiet --signoff -m "chore(reports): Linux golden lines for KiCad $TAG (native clang and docker)"
+          fi
+          git push origin "update/kicad-$TAG"
+          cat "reports/kicad-$TAG.md" "$RUNNER_TEMP/docker-section.md" > "$RUNNER_TEMP/body.md"
+          url="$(gh pr create --base "$TYPMAX_WATCH_BASE" --head "update/kicad-$TAG" \
+                   --title "chore(vendor): KiCad $TAG" --body-file "$RUNNER_TEMP/body.md")"
+          echo "$url"
+          echo "number=${url##*/}" >> "$GITHUB_OUTPUT"
+
+  macos-gate:
+    needs: [check, update]
+    if: needs.update.outputs.skip == '0' && needs.update.outputs.pr != ''
+    runs-on: macos-14
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: write   # the result, as a comment
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      PR: ${{ needs.update.outputs.pr }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: update/kicad-${{ needs.check.outputs.tag }}
+      - name: Build on arm64 and compare the golden lines with Linux
+        run: |
+          brew list ninja >/dev/null 2>&1 || brew install ninja
+          set +e
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release > build.log 2>&1 && ninja -C build -j3 >> build.log 2>&1
+          brc=$?
+          python3 tests/run_tests.py --binary build/typmax-router --only t_determinism > det.log 2>&1; drc=$?
+          python3 tests/run_tests.py --binary build/typmax-router --record-golden macos-golden.jsonl > rec.log 2>&1
+          if cmp -s macos-golden.jsonl "reports/kicad-$TAG.golden.jsonl"; then same=yes; else same=no; fi
+          if cmp -s macos-golden.jsonl "reports/kicad-$TAG.docker-golden.jsonl"; then dsame=yes; else dsame=no; fi
+          set -e
+          {
+            echo "### macOS arm64 gate (macos-14)"
+            echo
+            echo "- build: exit $brc"
+            echo "- determinism within/across processes: exit $drc"
+            echo "- golden lines byte-identical to the Ubuntu clang build: **$same**"
+            echo "- golden lines byte-identical to the ones recorded in the linux/amd64 docker image: **$dsame**"
+            if [ "$same" = no ]; then
+              echo
+              echo '```'
+              diff "reports/kicad-$TAG.golden.jsonl" macos-golden.jsonl | head -40 || true
+              echo '```'
+            fi
+          } > comment.md
+          gh pr comment "$PR" --body-file comment.md
+          [ "$brc" = 0 ] && [ "$drc" = 0 ] && [ "$same" = yes ] && [ "$dsame" = yes ]
+
+  major:
+    needs: check
+    if: needs.check.outputs.kind == 'major'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: write          # the "port needed" issue
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build patch python3
+      - name: Dry-run report and the issue (opened once)
+        run: |
+          title="KiCad $TAG: port needed"
+          n="$(gh issue list --state all --search "\"$title\" in:title" --json title --jq "[.[] | select(.title == \"$title\")] | length")"
+          if [ "$n" -gt 0 ]; then echo "issue \"$title\" exists; nothing to do"; exit 0; fi
+          tools/kicad_watch.sh
+          gh issue create --title "$title" --body-file "reports/kicad-$TAG.md"

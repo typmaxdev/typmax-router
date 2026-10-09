@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 The typmax-router authors
+# Licences of files that cannot carry an SPDX header (https://reuse.software).
+# Every other file names its own; README.md "Licences" is the summary.
+version = 1
+
+[[annotations]]
+path = ["tests/boards/**", "tests/golden/**"]
+SPDX-FileCopyrightText = "2026 The typmax-router authors"
+SPDX-License-Identifier = "MIT"
+
+# A directory may hold its own REUSE.toml for its files (REUSE 3.2: the nearest one
+# applies); tests/run_tests.py reads every one.
+
+# The vendored KiCad files keep their own headers; the few that carry none
+# (Clipper2's version header, the licence texts) are KiCad's, under the
+# licence vendor/kicad.manifest names for each.
+[[annotations]]
+path = ["vendor/kicad/thirdparty/clipper2/**"]
+SPDX-FileCopyrightText = "Angus Johnson"
+SPDX-License-Identifier = "BSL-1.0"
+
+[[annotations]]
+path = ["vendor/kicad/thirdparty/rtree/**"]
+SPDX-FileCopyrightText = "The KiCad Developers"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = ["vendor/kicad.manifest"]
+SPDX-FileCopyrightText = "2026 The typmax-router authors"
+SPDX-License-Identifier = "MIT"

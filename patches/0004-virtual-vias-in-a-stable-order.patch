@@ -1,0 +1,83 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileCopyrightText: 2026 The typmax-router authors
+Subject: add virtual vias in a stable order; hash joints by position only
+Upstream-file: pcbnew/router/pns_joint.h (JOINT_TAG_HASH), pcbnew/router/pns_node.cpp (NODE::FixupVirtualVias)
+Why: JOINT_TAG_HASH mixed the net's POINTER into the hash, so NODE::m_joints
+ (an unordered_multimap) iterated in an order that moved with ASLR, and it
+ differs between standard libraries in any case. FixupVirtualVias walks
+ m_joints and Adds a virtual via per qualifying joint in that order; with
+ patch 0003 an item's serial is its order as an obstacle, so two equally near
+ virtual vias were still ordered by address, one map over from the one 0003
+ fixed (review r3 D-1; latent: no golden line or fixture route has two tied).
+ The virtual vias are now sorted by (position, layer, diameter) before they
+ are added, and the hash uses the position only (equality still compares the
+ net). The residue: two virtual vias of two different nets at one position,
+ layer and diameter (a short) keep the table's order.
+Upstream: yes, as a determinism fix with 0003; not yet proposed.
+
+--- a/pcbnew/router/pns_joint.h
++++ b/pcbnew/router/pns_joint.h
+@@ -4,6 +4,10 @@
+  * Copyright (C) 2013-2014 CERN
+  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+  *
++ * Modified by the typmax-router authors, 2026-10-07: JOINT_TAG_HASH no longer hashes
++ *   the net pointer
++ *   (patches/0004-virtual-vias-in-a-stable-order.patch in the typmax-router repository).
++ *
+  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+  *
+  * This program is free software: you can redistribute it and/or modify it
+@@ -58,9 +62,10 @@
+             using std::hash;
+             using std::string;
+ 
+-            return ( (hash<int>()( aP.pos.x )
+-                      ^ (hash<int>()( aP.pos.y ) << 1) ) >> 1 )
+-                   ^ (hash<void*>()( aP.net ) << 1);
++            // The position only: the net is a pointer, whose value (and so the table's
++            // iteration order) changes from run to run. Equality still compares the net;
++            // joints of two nets at one position merely share a bucket.
++            return ( hash<int>()( aP.pos.x ) ^ ( hash<int>()( aP.pos.y ) << 1 ) ) >> 1;
+         }
+     };
+ 
+--- a/pcbnew/router/pns_node.cpp
++++ b/pcbnew/router/pns_node.cpp
+@@ -3,6 +3,10 @@
+  *
+  * Copyright (C) 2013-2019 CERN
+  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
++ *
++ * Modified by the typmax-router authors, 2026-10-07: FixupVirtualVias adds its
++ *   virtual vias in a stable order
++ *   (patches/0004-virtual-vias-in-a-stable-order.patch in the typmax-router repository).
+  *
+  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+  *
+@@ -20,6 +24,7 @@
+  * with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++#include <algorithm>
+ #include <vector>
+ #include <cassert>
+ #include <utility>
+@@ -1337,6 +1342,17 @@
+                                        max_w + 2 * PNS_HULL_MARGIN, joint.Net() ) );
+         }
+     }
++
++    // m_joints is a hash table: its order differs between standard libraries. Add the
++    // virtual vias in an order of their own (position, layer, diameter), since their
++    // serials, and so their order as obstacles, follow the order they are added in.
++    std::stable_sort( vvias.begin(), vvias.end(),
++                      []( const VVIA* a, const VVIA* b )
++                      {
++                          const int la = a->Layers().Start(), lb = b->Layers().Start();
++                          return std::make_tuple( a->Pos().x, a->Pos().y, la, a->Diameter( la ) )
++                                 < std::make_tuple( b->Pos().x, b->Pos().y, lb, b->Diameter( lb ) );
++                      } );
+ 
+     for( auto vvia : vvias )
+     {
