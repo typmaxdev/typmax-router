@@ -14,7 +14,7 @@
 #               update/kicad-<tag> exists on the remote or a pull request for it exists in
 #               ANY state (open, closed or merged): a person may have edited or rejected
 #               it, so it is never re-created or force-pushed. Linux builds use clang, as
-#               the docker gate and the README's tested toolchains do.
+#               the docker gate and the README's toolchain line do.
 #   macos-gate  the same branch built on GitHub's arm64 Mac: its golden lines must be
 #               byte-identical to the Linux ones (the native clang build's and the ones
 #               recorded inside the docker image); the result is a comment on the PR.
@@ -23,7 +23,7 @@
 #
 # Every action is pinned by commit SHA (the tag in the comment). Permissions are per
 # job, least privilege; the workflow default is read-only. Every ${{ }} value a script
-# reads reaches it through env:, never inside the script text. README.md "Release
+# reads reaches it through env:, never inside the script text. MAINTAINING.md "Release
 # watch" lists the repository settings this needs.
 name: kicad-watch
 

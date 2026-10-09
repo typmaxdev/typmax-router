@@ -27,7 +27,7 @@ namespace {
 
 constexpr int PROTOCOL_VERSION = 2;
 // Bump SERVICE_VERSION whenever the same request could get a different answer
-// (a KiCad update does: README.md "Updating to a new KiCad release").
+// (a KiCad update does: MAINTAINING.md "Updating to a new KiCad release").
 constexpr const char* SERVICE_VERSION = "0.3.1";
 // The vendored KiCad, from vendor/kicad.manifest (CMakeLists.txt)
 constexpr const char* PNS_SOURCE = "KiCad " TYPMAX_KICAD_TAG " pcbnew/router @ " TYPMAX_KICAD_COMMIT;

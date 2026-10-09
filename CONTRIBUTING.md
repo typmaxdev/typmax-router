@@ -35,7 +35,7 @@ otherwise.
 
 ## Building and testing
 
-README.md, "Build" and "Test", has the commands. Before you open a pull request:
+README.md ("Build", "Test") and MAINTAINING.md have the commands. Before you open a pull request:
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -71,7 +71,7 @@ what is built:
 - **A stand-in** under `shim/`, for the parts of KiCad the router includes but the
   service replaces (the board model, wxWidgets, settings). SOURCE.md lists each one.
 
-Moving to a new KiCad release is done only by `tools/update_kicad.sh <tag>` (README.md,
+Moving to a new KiCad release is done only by `tools/update_kicad.sh <tag>` (MAINTAINING.md,
 "Updating to a new KiCad release"); the release watch opens such a pull request on its
 own when KiCad tags a patch release.
 

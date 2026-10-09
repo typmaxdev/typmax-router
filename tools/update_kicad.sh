@@ -23,7 +23,7 @@
 # 5. gates (unless --no-gates): configure + build (ninja -j4), ctest synthetic
 #    and determinism, the fixture suite when TYPMAX_FIXTURES_DIR is set, and a
 #    golden-line diff written to build/kicad-update/golden.diff. The golden
-#    lines are never re-recorded here: README.md "Updating to a new KiCad
+#    lines are never re-recorded here: MAINTAINING.md "Updating to a new KiCad
 #    release" says how to review and re-record them.
 #
 # --dry-run: steps 1-3 and a report of what step 4 would change; the
@@ -104,7 +104,7 @@ while IFS= read -r p; do
   cp -p "$SRC/$p" "$STAGE/kicad/$p"
 done < <(closure_paths)
 if [ $missing -ne 0 ]; then
-  [ $DRY -eq 1 ] || die 2 "the closure names files $TAG does not have; edit tools/kicad_closure.txt (README.md)"
+  [ $DRY -eq 1 ] || die 2 "the closure names files $TAG does not have; edit tools/kicad_closure.txt (MAINTAINING.md)"
   say "dry run: continuing without the missing files (a real update stops here)"
 fi
 
@@ -164,7 +164,7 @@ check_patches() {
     [ -f "$ROOT/patches/$p" ] || die 3 "patches/series names $p, which does not exist"
     if ! patch -d "$scratch" -p1 --forward --silent --batch -r - < "$ROOT/patches/$p" >"$STAGE/patch.log" 2>&1; then
       cat "$STAGE/patch.log" >&2
-      die 3 "patch $n ($p) does not apply to $TAG: rebase it onto the new upstream file, or drop it if $TAG fixed the reason (README.md)"
+      die 3 "patch $n ($p) does not apply to $TAG: rebase it onto the new upstream file, or drop it if $TAG fixed the reason (MAINTAINING.md)"
     fi
     say "patch $n applies: $p"
   done < <(series_patches)
@@ -255,7 +255,7 @@ B="$ROOT/build"; OUT="$B/kicad-update"; mkdir -p "$OUT"
 say "building (ninja -j$JOBS)"
 if ! { cmake -S "$ROOT" -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release && ninja -C "$B" -j"$JOBS"; } >"$OUT/build.log" 2>&1; then
   grep -m10 -E 'error:|fatal|CMake Error' "$OUT/build.log" >&2 || true
-  die 4 "build failed with $TAG; log: $OUT/build.log. A missing header is a closure or shim question (README.md)"
+  die 4 "build failed with $TAG; log: $OUT/build.log. A missing header is a closure or shim question (MAINTAINING.md)"
 fi
 PY3="$(command -v python3.11 || command -v python3)"
 fail=0
@@ -283,11 +283,11 @@ if "$PY3" "$ROOT/tests/run_tests.py" --binary "$B/typmax-router" --record-golden
   if diff "$ROOT/tests/golden/responses.jsonl" "$OUT/golden.jsonl" >"$OUT/golden.diff"; then
     say "golden lines: unchanged"; echo "SAME" >"$OUT/golden.status"
   else
-    say "golden lines: $(grep -c '^>' "$OUT/golden.diff") of $(wc -l <"$OUT/golden.jsonl" | tr -d ' ') differ ($OUT/golden.diff): classify them, then re-record (README.md)"
+    say "golden lines: $(grep -c '^>' "$OUT/golden.diff") of $(wc -l <"$OUT/golden.jsonl" | tr -d ' ') differ ($OUT/golden.diff): classify them, then re-record (MAINTAINING.md)"
     echo "DIFF" >"$OUT/golden.status"
   fi
 else
   say "golden lines: could not record (log: $OUT/golden.log)"; echo "FAIL" >"$OUT/golden.status"; fail=1
 fi
 [ $fail -eq 0 ] || die 5 "a gate failed"
-say "done: vendor/kicad at $TAG, gates green; commit it (README.md)"
+say "done: vendor/kicad at $TAG, gates green; commit it (MAINTAINING.md)"

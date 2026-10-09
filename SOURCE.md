@@ -25,7 +25,7 @@ from `thirdparty/`, and the licence texts. `tools/kicad_closure.txt` is the list
 `tools/update_kicad.sh` copies it, and `vendor/kicad.manifest` records every file's
 sha256 and the licence its header states. Nothing in `vendor/kicad/` is ever edited:
 our changes are `patches/` (applied by CMake to a copy in the build directory) and
-`shim/`. README.md, "Updating to a new KiCad release", is the routine.
+`shim/`. MAINTAINING.md, "Updating to a new KiCad release", is the routine.
 
 The closure was measured, not guessed: every router `.cpp` compiled against KiCad's
 full tree with the stand-ins first on the include path, the compiler's dependency
