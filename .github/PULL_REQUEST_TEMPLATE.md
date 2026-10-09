@@ -7,7 +7,7 @@
 ## Test plan
 
 - [ ] `ctest --test-dir build --output-on-failure` (synthetic, determinism, watcher; fixtures if you have them)
-- [ ] golden lines unchanged, or re-recorded with the classification in a commit body (README.md "Updating", step 4)
+- [ ] golden lines unchanged, or re-recorded with the classification in a commit body (MAINTAINING.md "Updating", step 4)
 
 ## Checklist
 

@@ -3,7 +3,7 @@
 #
 # Dependabot keeps the SHA-pinned actions current (it rewrites the SHA and the
 # version comment together). The vendored KiCad code is not a package: it moves only
-# through tools/update_kicad.sh and the release watch (README.md "Updating").
+# through tools/update_kicad.sh and the release watch (MAINTAINING.md "Updating").
 version: 2
 updates:
   - package-ecosystem: github-actions

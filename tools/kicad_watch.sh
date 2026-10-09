@@ -135,7 +135,7 @@ cp "$WT/$REPORT" "$ROOT/$REPORT"
 for p in vendor SOURCE.md; do [ -e "$WT/$p" ] && git -C "$WT" add -A -- "$p"; done
 git -C "$WT" add -f "$REPORT"
 git -C "$WT" commit --quiet --signoff -m "chore(vendor): KiCad $tag (prepared by tools/kicad_watch.sh; not reviewed)" \
-  -m "update_kicad.sh exit $urc. $REPORT has the gates, the patches and the golden-line diff. Golden lines and engine.version are left for the reviewer (README.md, \"Updating to a new KiCad release\")." \
+  -m "update_kicad.sh exit $urc. $REPORT has the gates, the patches and the golden-line diff. Golden lines and engine.version are left for the reviewer (MAINTAINING.md, \"Updating to a new KiCad release\")." \
   || finish 5 "patch-release $tag: nothing to commit on $BRANCH"
 [ "$urc" -eq 0 ] && finish 0 "patch-release $tag: branch $BRANCH ready for review, gates green; $REPORT"
 finish 5 "patch-release $tag: branch $BRANCH needs work (update_kicad.sh exit $urc); $REPORT"

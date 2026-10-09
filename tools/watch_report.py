@@ -81,7 +81,7 @@ def main():
     else:
         out += [f"# KiCad {a.tag}: patch release, prepared on `{a.branch}`", "",
                 f"tools/kicad_watch.sh created `{a.branch}` and ran `tools/update_kicad.sh {a.tag}` there. "
-                "Nothing was merged. Review the branch, then follow README.md, "
+                "Nothing was merged. Review the branch, then follow MAINTAINING.md, "
                 "\"Updating to a new KiCad release\".", ""]
     out += ["## Update", "", f"`update_kicad.sh` exit **{a.update_rc}**: {UPDATE_RC.get(a.update_rc, 'unexpected')}.", ""]
     keep = [l for l in lines if re.search(r"^(tag |patch |vendor/kicad|.*has no |.*does not apply|try-build|gate |golden|build failed|dry run|patches/series)", l)]
@@ -98,7 +98,7 @@ def main():
         if old and new:
             out += [golden_diff.render(golden_diff.compare(old.splitlines(), new.splitlines()), markdown=True), "",
                     "Classify every non-identical line (better / equivalent / worse) by reading its geometry, "
-                    "then re-record and bump `SERVICE_VERSION` (README.md).", ""]
+                    "then re-record and bump `SERVICE_VERSION` (MAINTAINING.md).", ""]
         else:
             out += ["(not recorded: the build or the recording failed)", ""]
         out += ["## Fixture boards (before = the base, after = this release; same machine, same run)", ""]

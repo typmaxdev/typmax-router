@@ -2,7 +2,7 @@
 <!-- SPDX-FileCopyrightText: 2026 The typmax-router authors -->
 # reports/
 
-Written by `tools/kicad_watch.sh` (README.md, "Release watch"; on the GitHub runner,
+Written by `tools/kicad_watch.sh` (MAINTAINING.md, "Release watch"; on the GitHub runner,
 where the workflow uploads them): `watch.log`
 (one line per run), `kicad-<tag>.md` (what a new KiCad release changed: the
 patches, the gates, the golden-line diff, the fixture boards before and
