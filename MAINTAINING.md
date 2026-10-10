@@ -126,6 +126,54 @@ never re-records the golden lines.
    classification in the commit body) and the version bump as separate conventional
    commits, and record the fixture numbers before/after in the report of the update.
 
+## Container image
+
+`.github/workflows/image.yml` builds `docker/Dockerfile` (the same build-and-test image
+the README's docker line and the release watch use; a red test fails the build) on a
+GitHub-hosted runner and pushes its runtime stage — the stripped binary alone, on
+`debian:bookworm-slim`, as user 65534 — to **`ghcr.io/typmaxdev/typmax-router`**:
+
+- a push to `main` → tags `main` and `sha-<short sha>`;
+- a tag `v*` → the tag verbatim and, unless it is a pre-release, `latest`;
+- a pull request → built and smoke-tested, never pushed (a fork's token is read-only);
+- `workflow_dispatch` → pushed only when run on `main` or a `v*` tag.
+
+`linux/amd64` only (the one consumer builds a linux/amd64 image), and with
+provenance and SBOM attestations **off**: with one the pushed reference is an OCI index
+(the image beside an `unknown/unknown` attestation manifest), so the digest a consumer
+pins would name the index rather than the image. Without them a single-platform push
+is one image manifest, and the digest the job prints is the one a `COPY --from`
+resolves. The job's step summary and its outputs `digest` and `ref` carry it.
+
+The binary's path in the image is fixed: **`/usr/local/bin/typmax-router`** (also the
+entrypoint). The smoke step after every build holds it there: the entrypoint, `--version`,
+a `ping` line answered per PROTOCOL.md, and the labels below. A consumer pins the image
+**by digest**, never by tag, and copies the binary out of it:
+
+```dockerfile
+COPY --from=ghcr.io/typmaxdev/typmax-router@sha256:<digest> /usr/local/bin/typmax-router /usr/local/bin/typmax-router
+```
+
+The runtime stage links only libstdc++/libc, so the copied binary runs on any glibc
+image at least as new as bookworm's (glibc 2.36).
+
+**Licence.** The binary is GPL-3.0-or-later; its complete corresponding source is this
+repository at the commit the image was built from, which every image names in its OCI
+labels: `org.opencontainers.image.revision` (the commit sha) and
+`org.opencontainers.image.source` (this repository's URL), beside
+`org.opencontainers.image.licenses=GPL-3.0-or-later`, `.title`, `.description`,
+`.version` and `.created` (`docker/metadata-action` writes them; the Dockerfile carries
+none, so a local `docker build` has only the labels you pass). A consumer that ships the
+binary ships the GPL's obligations with it: keep the labels, or state the digest and the
+commit where the binary is distributed.
+
+The package needs **no secret**: the workflow's own `GITHUB_TOKEN` with `packages: write`
+on the one job. The first push creates the package as private; make it public once in
+*Packages → typmax-router → Package settings → Change visibility* so a consumer can pull
+it unauthenticated (an organisation may also need *Packages → Actions access* to let
+the workflow write it). Dependabot's `github-actions` entry covers the workflow's actions
+with the other workflows'. The base image `debian:bookworm-slim` moves only by hand.
+
 ## Release watch
 
 The watch runs on **GitHub-hosted runners**, not on a developer's machine:
