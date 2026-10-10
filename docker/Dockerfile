@@ -4,6 +4,8 @@
 #   docker build --platform linux/amd64 -f docker/Dockerfile -t typmax-router:linux .
 # The image builds the binary and runs the synthetic and determinism suites;
 # a red test fails the build.
+# The `image` workflow (.github/workflows/image.yml) builds this same file and publishes
+# its runtime stage as ghcr.io/typmaxdev/typmax-router (MAINTAINING.md "Container image").
 FROM debian:bookworm-slim AS build
 RUN apt-get update \
  && apt-get install -y --no-install-recommends clang cmake ninja-build patch python3 \
