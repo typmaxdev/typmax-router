@@ -99,7 +99,7 @@ dt { font-weight: 600; } dd { margin: 0; color: var(--fg-2); }
 <header>
   <div class="eyebrow">typmax-router · live demo</div>
   <h1>It draws the wires on a circuit board for you.</h1>
-  <p>A circuit board is a flat card with small metal pads. Each wire must join two pads without touching any other wire. This service plans one wire at a time, the same way KiCad's router does inside the editor, but as a program other software can call. Everything below is a replay of the real program's answers on its test boards.</p>
+  <p>A circuit board is a flat card with small metal pads. Each wire must join two pads without touching any other wire. The planning is done by KiCad's own router, taken out of the editor and run as a program other software can call, one wire at a time. Everything below is a replay of the real program's answers on its test boards.</p>
 </header>
 
 <div class="steps3">
@@ -161,7 +161,7 @@ dt { font-weight: 600; } dd { margin: 0; color: var(--fg-2); }
   <p>For engineers: units on the wire are integer nanometres, y down, as in KiCad. The same board and request give the same bytes back on every run and platform, which is why a replay is faithful. PROTOCOL.md is the contract. To regenerate this page's data:</p>
   <pre>cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release &amp;&amp; ninja -C build
 python3 tools/demo_data.py --binary build/typmax-router   # writes docs/demo/data.js</pre>
-  <p class="backlink">Built by <a href="https://typmax.com" rel="noopener">typmax.com</a>. Source and protocol: <a href="https://github.com/typmaxdev/typmax-router" rel="noopener">github.com/typmaxdev/typmax-router</a>.</p>
+  <p class="backlink">The routing itself is done by KiCad's push-and-shove router (Tomasz Wlostowski / CERN and the KiCad developers), used under the GPL; this project is not affiliated with or endorsed by the KiCad project. The service around it and this page are by <a href="https://typmax.com" rel="noopener">typmax.com</a>. Source and protocol: <a href="https://github.com/typmaxdev/typmax-router" rel="noopener">github.com/typmaxdev/typmax-router</a>.</p>
 </section>
 </div>
 
