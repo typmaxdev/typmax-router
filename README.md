@@ -18,6 +18,12 @@ is the contract.
 **Status:** early, pre-1.0, no tagged releases yet (build from `main`). The protocol
 is versioned (`protocol_version` 2); only its guarantees table is stable.
 
+## Demo
+
+[typmaxdev.github.io/typmax-router](https://typmaxdev.github.io/typmax-router/) replays the
+binary's recorded answers on the test boards, in plain language (`docs/demo/`, published
+by `.github/workflows/pages.yml`; `tools/demo_data.py` regenerates the data).
+
 ## Build
 
 C++20 compiler, CMake ≥ 3.16, `patch`; macOS or Linux.

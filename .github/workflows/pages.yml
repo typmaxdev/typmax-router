@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 The typmax-router authors
+#
+# Publishes docs/demo/ (the plain-language demo page and its recorded responses) as the
+# repository's GitHub Pages site. Static files only: docs/demo/data.js is committed, so
+# no build of the router runs here; regenerate it with tools/demo_data.py when the
+# boards or the binary change. Pages must be set to "GitHub Actions" as its source.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/demo/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/demo
+      - id: deployment
+        uses: actions/deploy-pages@v4
