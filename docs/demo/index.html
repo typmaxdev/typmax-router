@@ -1,0 +1,553 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 The typmax-router authors -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>typmax-router demo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a plain-language header and a three-step strip, then examples on the left, the board
+   in the middle, and "what was asked / what came back" in words on the right; the raw JSON sits
+   behind a toggle. Light first (a workbench), with a dark variant. */
+:root {
+  --bg: #f3f5f8; --panel: #ffffff; --panel-2: #eef0f3; --line: #d9dfe7;
+  --fg: #17212b; --fg-2: #3b4652; --muted: #5d6877; --accent: #c8641e; --accent-ink: #9a4a12;
+  --fcu: #c93b2f; --bcu: #2f66b8; --new: #15803d; --gone: #c42b2b; --hole: #f3f5f8;
+  --board: #dfe6dc; --edge: #9a7416; --keepout: #9c2bb0; --ok: #15803d; --err: #c42b2b;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1216; --panel: #161b22; --panel-2: #1c232c; --line: #2a333f;
+  --fg: #e6e9ee; --fg-2: #c3cad4; --muted: #8b96a5; --accent: #e08a4a; --accent-ink: #e08a4a;
+  --fcu: #d64b3f; --bcu: #4f86d9; --new: #4ade80; --gone: #f87171; --hole: #0f1216;
+  --board: #1a2621; --edge: #e0b84a; --keepout: #c04ad6; --ok: #4ade80; --err: #f87171;
+  color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #0f1216; --panel: #161b22; --panel-2: #1c232c; --line: #2a333f;
+  --fg: #e6e9ee; --fg-2: #c3cad4; --muted: #8b96a5; --accent: #e08a4a; --accent-ink: #e08a4a;
+  --fcu: #d64b3f; --bcu: #4f86d9; --new: #4ade80; --gone: #f87171; --hole: #0f1216;
+  --board: #1a2621; --edge: #e0b84a; --keepout: #c04ad6; --ok: #4ade80; --err: #f87171;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 var(--sans); }
+body { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 48px; }
+.wrap { max-width: 1280px; margin: 0 auto; display: flex; flex-direction: column; gap: 26px; }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+header { display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
+header h1 { margin: 0; font-size: clamp(26px, 4vw, 40px); line-height: 1.1; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
+header p { margin: 0; font-size: 17px; color: var(--fg-2); }
+.steps3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 760px) { .steps3 { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; min-width: 0; }
+.steps3 .card { display: flex; flex-direction: column; gap: 6px; }
+.steps3 .n { font: 500 12px var(--mono); color: var(--accent-ink); }
+.steps3 .t { font-size: 17px; font-weight: 600; }
+.steps3 .d { font-size: 14px; color: var(--fg-2); }
+.app { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.rail { flex: 0 1 240px; min-width: 200px; display: flex; flex-direction: column; gap: 4px; }
+.rail .eyebrow { margin: 4px 0 6px; }
+.rail button { text-align: left; background: none; border: 1px solid transparent; border-radius: 8px; color: var(--fg); padding: 10px 12px; font: 500 14px/1.3 var(--sans); cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-height: 44px; }
+.rail button:hover { background: var(--panel-2); }
+.rail button[aria-current="true"] { background: var(--panel); border-color: var(--accent); }
+.rail button small { font: 400 12px/1.3 var(--sans); color: var(--muted); }
+.stage { flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.blurb { margin: 0; color: var(--fg-2); }
+canvas { width: 100%; display: block; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.controls button, .controls select { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 16px; font: 500 14px var(--sans); cursor: pointer; min-height: 44px; }
+.controls #play { background: var(--fg); color: var(--bg); border-color: var(--fg); min-width: 92px; }
+.controls input[type=range] { flex: 1 1 160px; accent-color: var(--accent); min-width: 0; }
+.controls label { font-size: 13px; color: var(--muted); }
+.steplist { display: flex; flex-wrap: wrap; gap: 6px; }
+.steplist button { background: var(--panel); border: 1px solid var(--line); color: var(--fg); border-radius: 999px; padding: 8px 14px; font: 500 13px var(--sans); cursor: pointer; min-height: 40px; }
+.steplist button[aria-current="true"] { border-color: var(--accent); color: var(--accent-ink); }
+button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 13px; }
+.legend span::before { content: ""; display: inline-block; width: 18px; height: 5px; border-radius: 3px; vertical-align: middle; margin-right: 6px; background: var(--c); }
+.legend .dash::before { background: repeating-linear-gradient(90deg, var(--c) 0 4px, transparent 4px 7px); }
+.side { flex: 1 1 300px; min-width: 0; max-width: 380px; display: flex; flex-direction: column; gap: 12px; }
+@media (max-width: 1100px) { .side { max-width: none; flex-basis: 100%; } }
+.side .card { display: flex; flex-direction: column; gap: 10px; }
+.side .head { display: flex; align-items: center; gap: 8px; }
+.pill { font: 500 11px/1 var(--mono); padding: 3px 8px; border-radius: 999px; border: 1px solid; }
+.pill.ok { color: var(--ok); border-color: var(--ok); } .pill.err { color: var(--err); border-color: var(--err); } .pill.rev { color: var(--muted); border-color: var(--line); }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.tiles div { background: var(--panel-2); border-radius: 8px; padding: 8px 10px; }
+.tiles b { display: block; font: 500 22px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+.tiles span { font-size: 12px; color: var(--muted); }
+.said { font-size: 14px; color: var(--fg-2); }
+.said.err { color: var(--err); }
+details summary { cursor: pointer; font-size: 13px; font-weight: 500; color: var(--accent-ink); }
+details pre { margin: 8px 0 0; font: 12px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 280px; overflow: auto; color: var(--fg); background: var(--panel-2); border-radius: 8px; padding: 8px 10px; }
+pre .k { color: var(--muted); } pre .s { color: var(--accent-ink); } pre .n { color: var(--bcu); }
+dl { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; font-size: 13px; line-height: 1.45; }
+dt { font-weight: 600; } dd { margin: 0; color: var(--fg-2); }
+.foot { color: var(--muted); font-size: 13px; max-width: 80ch; }
+.foot pre { font: 12px/1.45 var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; overflow-x: auto; color: var(--fg); }
+.foot a { color: var(--accent-ink); }
+.backlink { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">typmax-router · live demo</div>
+  <h1>It draws the wires on a circuit board for you.</h1>
+  <p>A circuit board is a flat card with small metal pads. Each wire must join two pads without touching any other wire. This service plans one wire at a time, the same way KiCad's router does inside the editor, but as a program other software can call. Everything below is a replay of the real program's answers on its test boards.</p>
+</header>
+
+<div class="steps3">
+  <div class="card"><div class="n">STEP 1</div><div class="t">You send the board</div><div class="d">A text file listing every pad, every existing wire, and the spacing rules (how far wires must stay apart).</div></div>
+  <div class="card"><div class="n">STEP 2</div><div class="t">You ask for one wire</div><div class="d">"Connect pad U1.1 to pad U2.1." You can also ask it to nudge an existing wire, or to go through to the other side of the board.</div></div>
+  <div class="card"><div class="n">STEP 3</div><div class="t">It answers with a proposal</div><div class="d">Which old wires to take out and which new ones to lay down. Nothing changes on the board until you say "apply".</div></div>
+</div>
+
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Examples"><div class="eyebrow">Examples</div></nav>
+
+  <section class="stage">
+    <p class="blurb" id="blurb"></p>
+    <canvas id="cv" width="960" height="640" aria-label="Board view"></canvas>
+    <div class="controls">
+      <button id="play" type="button">Pause</button>
+      <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Position in the animation">
+      <label for="speed">Speed</label>
+      <select id="speed"><option value="0.5">Slow</option><option value="1" selected>Normal</option><option value="2">Fast</option></select>
+    </div>
+    <div class="steplist" id="steps" role="tablist" aria-label="Requests in this example"></div>
+    <div class="legend">
+      <span style="--c:var(--fcu)">wires on the top side</span>
+      <span style="--c:var(--bcu)">wires on the bottom side</span>
+      <span style="--c:var(--new)">new wire being laid</span>
+      <span class="dash" style="--c:var(--gone)">wire being removed</span>
+      <span style="--c:var(--edge)">edge of the board</span>
+      <span style="--c:var(--keepout)">no-go zone</span>
+    </div>
+  </section>
+
+  <aside class="side">
+    <div class="card">
+      <div class="head"><div class="eyebrow">What was asked</div><span class="pill rev" id="rev"></span></div>
+      <div id="asked"></div>
+    </div>
+    <div class="card">
+      <div class="head"><div class="eyebrow">What came back</div><span class="pill" id="status"></span></div>
+      <div class="tiles" id="tiles"></div>
+      <div class="said" id="said"></div>
+      <details><summary>Show the raw request and response (JSON)</summary><pre id="req"></pre><pre id="resp"></pre></details>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Words you'll see</div>
+      <dl>
+        <dt>pad</dt><dd>a metal spot a component leg is soldered to</dd>
+        <dt>track</dt><dd>a wire: a thin strip of copper</dd>
+        <dt>net</dt><dd>everything that must be electrically joined; named A, B, VCC…</dd>
+        <dt>via</dt><dd>a plated hole that lets a wire switch sides</dd>
+        <dt>clearance</dt><dd>the gap wires of different nets must keep</dd>
+        <dt>shove</dt><dd>pushing other wires aside instead of going around</dd>
+        <dt>proposal</dt><dd>the answer: wires to remove, wires to add</dd>
+      </dl>
+    </div>
+  </aside>
+</div>
+
+<section class="foot">
+  <p>For engineers: units on the wire are integer nanometres, y down, as in KiCad. The same board and request give the same bytes back on every run and platform, which is why a replay is faithful. PROTOCOL.md is the contract. To regenerate this page's data:</p>
+  <pre>cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release &amp;&amp; ninja -C build
+python3 tools/demo_data.py --binary build/typmax-router   # writes docs/demo/data.js</pre>
+  <p class="backlink">Built by <a href="https://typmax.com" rel="noopener">typmax.com</a>. Source and protocol: <a href="https://github.com/typmaxdev/typmax-router" rel="noopener">github.com/typmaxdev/typmax-router</a>.</p>
+</section>
+</div>
+
+<script src="data.js"></script>
+<script>
+(function () {
+  "use strict";
+  const DATA = window.DEMO_DATA || [];
+  const cv = document.getElementById("cv");
+  const ctx = cv.getContext("2d");
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const STEP_MS = 4200;
+  const MM = 1e6;
+  const mm = (v) => (Math.round(v / MM * 100) / 100).toString();
+  const side = (l) => l === "F.Cu" ? "top side" : l === "B.Cu" ? "bottom side" : l;
+  const esc = (s) => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+  // Plain-language names for the scenarios and their requests.
+  const NAMES = {
+    walkaround: ["Go around an obstacle", ["Go around", "Start from an empty spot", "Straight line only (refused)", "Mouse-style, 1 mm at a time"]],
+    shove: ["Push other wires aside", ["Push aside", "Apply", "Route again: nothing to do"]],
+    shove_drag: ["Drag a wire by hand", ["Drag up, pushing", "Drag down, going around"]],
+    via: ["Switch sides through a via", ["Through a via"]],
+    unroutable: ["No way through", ["Go around (refused)", "Push aside (refused)"]],
+    power: ["A thicker power wire", ["Thick wire from a pad", "Thick wire from a spot, pushing"]],
+    holes: ["Avoid a screw hole", ["Around the screw hole", "Through a via to the back"]],
+    arc: ["Around a curved wire", ["Around the curve"]],
+    arc_shove: ["Push a curved wire", ["Push the curve"]],
+  };
+  const BLURB = {
+    walkaround: "Wire A has to get from the left pad to the right pad, but a big pad of another wire sits in the way. Watch the router walk around it. The third request forbids going around, so it is refused.",
+    shove: "Wire A's straight path is blocked by three wires of net C. In shove mode the router pushes them aside: each moved wire comes back as one removal and one addition. Then the proposal is applied, and asking again finds nothing left to do.",
+    shove_drag: "Grab one of C's wire pieces and drag it up with the push-and-shove dragger, then down again in go-around mode.",
+    via: "The two pads are on opposite sides of the board. The route drops through a via (a plated hole) to the bottom side.",
+    unroutable: "The right pad sits inside a closed ring of another wire and a no-go zone. There is no path that keeps the required gap, so both requests are refused.",
+    power: "VCC is a power net: a wider wire with a bigger gap to keep from net D's wire.",
+    holes: "Net E has to skirt a screw hole with no copper. Then net A goes from a through-hole pad to the bottom side.",
+    arc: "The router walks around a curved wire of net B.",
+    arc_shove: "Same board, shove mode: the curved wire is pushed out of the way.",
+  };
+  const ERRORS = {
+    collision: "A straight line would touch something of another net, so the request was refused.",
+    unroutable: "No path keeps the required gap from everything else, so the request was refused.",
+  };
+
+  let scen = 0, step = 0, t = 0, playing = true, speed = 1, lastTs = null;
+
+  // ---------- selection ----------
+  const rail = document.getElementById("rail");
+  DATA.forEach((s, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    const nm = NAMES[s.name] || [s.name, []];
+    const n = s.steps.length;
+    b.innerHTML = `<span>${esc(nm[0])}</span><small>${n} request${n > 1 ? "s" : ""}</small>`;
+    b.addEventListener("click", () => select(i, 0));
+    rail.appendChild(b);
+  });
+  const stepsEl = document.getElementById("steps");
+
+  function select(si, sti) {
+    scen = si; step = sti; t = 0; playing = true; lastTs = null;
+    [...rail.querySelectorAll("button")].forEach((b, i) => b.setAttribute("aria-current", i === si ? "true" : "false"));
+    const s = DATA[scen];
+    const nm = NAMES[s.name] || [s.name, []];
+    document.getElementById("blurb").textContent = BLURB[s.name] || s.blurb;
+    stepsEl.innerHTML = "";
+    s.steps.forEach((x, i) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = `${i + 1} · ${nm[1][i] || x.method}`;
+      b.setAttribute("aria-current", i === sti ? "true" : "false");
+      b.addEventListener("click", () => select(scen, i));
+      stepsEl.appendChild(b);
+    });
+    prepare();
+    renderSide();
+    document.getElementById("play").textContent = "Pause";
+  }
+
+  // ---------- geometry prep ----------
+  let P = null;
+  function prepare() {
+    const st = DATA[scen].steps[step];
+    const board = st.board;
+    const pts = board.outline.flat();
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const bb = { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+    const prop = st.response.ok && st.response.result.proposal ? st.response.result.proposal
+      : (st.method === "apply" ? st.params.proposal : { remove: [], add: [] });
+    const removed = new Set(prop.remove);
+    const net = st.params.net || itemNet(board, st.params.item);
+    const own = prop.add.filter(a => a.net === net && st.method === "route");
+    const other = prop.add.filter(a => !own.includes(a));
+    const startPt = resolvePoint(board, st.params.start) || st.params.from || itemCentre(board, st.params.item);
+    const endPt = resolvePoint(board, st.params.end) || st.params.to || null;
+    const chain = orderChain(own.filter(a => a.kind === "track"), startPt || (own[0] && own[0].start));
+    const total = chain.reduce((s, c) => s + c.len, 0) || 1;
+    let acc = 0; chain.forEach(c => { c.t0 = acc / total; acc += c.len; c.t1 = acc / total; });
+    const vias = own.filter(a => a.kind === "via").map(v => {
+      let at = 1;
+      for (const c of chain) { if (dist(c.end, v.position) < v.diameter) { at = c.t1; break; } if (dist(c.start, v.position) < v.diameter) { at = c.t0; break; } }
+      return { v, at };
+    });
+    P = { st, board, bb, prop, removed, net, own, other, chain, vias, startPt, endPt, error: st.response.ok ? null : st.response.error };
+  }
+  function itemNet(board, id) { const it = [...board.tracks, ...board.vias].find(x => x.id === id); return it ? it.net : null; }
+  function itemCentre(board, id) {
+    const tr = board.tracks.find(x => x.id === id); if (tr) return [(tr.start[0] + tr.end[0]) / 2, (tr.start[1] + tr.end[1]) / 2];
+    const v = board.vias.find(x => x.id === id); return v ? v.position : null;
+  }
+  function resolvePoint(board, ref) {
+    if (!ref) return null;
+    if (ref.point) return ref.point;
+    const p = board.pads.find(x => x.id === ref.pad); return p ? p.position : null;
+  }
+  function dist(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
+  function orderChain(tracks, start) {
+    const rem = tracks.map(tr => ({ ...tr, len: tr.mid ? arcLen(tr) : dist(tr.start, tr.end) }));
+    const out = []; let cur = start;
+    while (rem.length) {
+      let best = 0, bestD = Infinity, flip = false;
+      rem.forEach((tr, i) => {
+        const d0 = cur ? dist(tr.start, cur) : 0, d1 = cur ? dist(tr.end, cur) : Infinity;
+        if (d0 < bestD) { bestD = d0; best = i; flip = false; }
+        if (d1 < bestD) { bestD = d1; best = i; flip = true; }
+      });
+      const tr = rem.splice(best, 1)[0];
+      if (flip) { const s = tr.start; tr.start = tr.end; tr.end = s; }
+      out.push(tr); cur = tr.end;
+    }
+    return out;
+  }
+  function arcLen(tr) { const a = arcOf(tr.start, tr.mid, tr.end); return a ? Math.abs(a.sweep) * a.r : dist(tr.start, tr.end); }
+  function arcOf(a, m, b) {
+    const ax = a[0], ay = a[1], bx = m[0], by = m[1], cx = b[0], cy = b[1];
+    const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+    if (Math.abs(d) < 1e-6) return null;
+    const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d;
+    const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d;
+    const r = Math.hypot(ax - ux, ay - uy);
+    const a0 = Math.atan2(ay - uy, ax - ux), am = Math.atan2(by - uy, bx - ux), a1 = Math.atan2(cy - uy, cx - ux);
+    const norm = (x) => (x % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+    let sweep = norm(a1 - a0); const sm = norm(am - a0);
+    if (sm > sweep) sweep -= 2 * Math.PI;
+    return { cx: ux, cy: uy, r, a0, sweep };
+  }
+
+  // ---------- drawing ----------
+  let scale = 1, ox = 0, oy = 0;
+  const X = (x) => ox + x * scale, Y = (y) => oy + y * scale;
+  function fit() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = cv.clientWidth, h = Math.round(w * 2 / 3);
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    cv.style.height = h + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const { bb } = P, m = 1.5 * MM;
+    scale = Math.min(w / (bb.x1 - bb.x0 + 2 * m), h / (bb.y1 - bb.y0 + 2 * m));
+    ox = (w - (bb.x1 - bb.x0) * scale) / 2 - bb.x0 * scale;
+    oy = (h - (bb.y1 - bb.y0) * scale) / 2 - bb.y0 * scale;
+    return { w, h };
+  }
+  const layerCol = (l) => l === "B.Cu" ? css("--bcu") : css("--fcu");
+  const ease = (x) => x < 0 ? 0 : x > 1 ? 1 : x * x * (3 - 2 * x);
+  const seg = (t, a, b) => ease((t - a) / (b - a));
+
+  function trackPath(tr, frac) {
+    ctx.beginPath();
+    if (tr.mid) {
+      const a = arcOf(tr.start, tr.mid, tr.end);
+      if (a) { ctx.arc(X(a.cx), Y(a.cy), a.r * scale, a.a0, a.a0 + a.sweep * (frac == null ? 1 : frac), a.sweep < 0); return; }
+    }
+    const f = frac == null ? 1 : frac;
+    ctx.moveTo(X(tr.start[0]), Y(tr.start[1]));
+    ctx.lineTo(X(tr.start[0] + (tr.end[0] - tr.start[0]) * f), Y(tr.start[1] + (tr.end[1] - tr.start[1]) * f));
+  }
+  function drawTrack(tr, { alpha = 1, dash = null, halo = null, frac = null } = {}) {
+    ctx.save(); ctx.globalAlpha = alpha; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    if (halo) { trackPath(tr, frac); ctx.strokeStyle = halo; ctx.lineWidth = tr.width * scale + 6; ctx.globalAlpha = alpha * 0.4; ctx.stroke(); ctx.globalAlpha = alpha; }
+    trackPath(tr, frac); ctx.setLineDash(dash || []); ctx.strokeStyle = layerCol(tr.layer); ctx.lineWidth = Math.max(1.5, tr.width * scale); ctx.stroke();
+    ctx.restore();
+  }
+  function drawVia(v, alpha = 1, halo = null) {
+    ctx.save(); ctx.globalAlpha = alpha;
+    if (halo) { ctx.beginPath(); ctx.arc(X(v.position[0]), Y(v.position[1]), v.diameter * scale / 2 + 3, 0, 7); ctx.fillStyle = halo; ctx.globalAlpha = alpha * 0.4; ctx.fill(); ctx.globalAlpha = alpha; }
+    ctx.beginPath(); ctx.arc(X(v.position[0]), Y(v.position[1]), v.diameter * scale / 2, 0, 7); ctx.fillStyle = css("--edge"); ctx.fill();
+    ctx.beginPath(); ctx.arc(X(v.position[0]), Y(v.position[1]), v.drill * scale / 2, 0, 7); ctx.fillStyle = css("--hole"); ctx.fill();
+    ctx.restore();
+  }
+  function drawPad(p) {
+    const w = p.size[0] * scale, h = p.size[1] * scale, cx = X(p.position[0]), cy = Y(p.position[1]);
+    const through = p.layers.length > 1;
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(-(p.rotation || 0) * Math.PI / 180);
+    ctx.fillStyle = through ? css("--edge") : layerCol(p.layers[0]); ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    if (p.shape === "circle") ctx.arc(0, 0, Math.max(w, h) / 2, 0, 7);
+    else if (p.shape === "oval" || p.shape === "roundrect") ctx.roundRect(-w / 2, -h / 2, w, h, p.shape === "oval" ? Math.min(w, h) / 2 : Math.min(w, h) / 5);
+    else ctx.rect(-w / 2, -h / 2, w, h);
+    ctx.fill();
+    if (p.drill) { ctx.beginPath(); ctx.arc(0, 0, p.drill * scale / 2, 0, 7); ctx.fillStyle = css("--hole"); ctx.globalAlpha = 1; ctx.fill(); }
+    ctx.restore();
+    ctx.save(); ctx.font = `11px ${css("--mono")}`; ctx.fillStyle = css("--muted"); ctx.textAlign = "center";
+    ctx.fillText(p.net ? `${p.id} · wire ${p.net}` : `${p.id} · screw hole`, cx, cy - Math.max(w, h) / 2 - 5);
+    ctx.restore();
+  }
+  function marker(pt, pulse, text) {
+    if (!pt) return;
+    ctx.save(); ctx.strokeStyle = css("--edge"); ctx.lineWidth = 2; ctx.globalAlpha = 0.9 - 0.5 * pulse;
+    ctx.beginPath(); ctx.arc(X(pt[0]), Y(pt[1]), 12 + 10 * pulse, 0, 7); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.font = `500 12px ${css("--mono")}`; ctx.fillStyle = css("--edge"); ctx.textAlign = "left";
+    ctx.fillText(text, X(pt[0]) + 16, Y(pt[1]) + 26);
+    ctx.restore();
+  }
+
+  function caption() {
+    const { st, error, prop, removed, other, chain } = P;
+    const isApply = st.method === "apply", hasOwn = chain.length > 0;
+    const fadeB = isApply ? 0.5 : 0.4;
+    if (isApply) return t < 0.5 ? "Applying: the proposal becomes part of the board." : `Applied. The board is now at revision ${st.response.ok ? st.response.result.revision : "?"}.`;
+    if (error) return t < 0.55 ? "Trying…" : `Refused: ${error.code === "collision" ? "a straight line would touch something" : "there is no way through"}.`;
+    if (t < 0.15) return st.method === "drag" ? "The request: drag this wire piece to the new spot." : `The request: connect ${st.params.start.pad || "a free spot"} to ${st.params.end ? (st.params.end.pad || "a free spot") : "the waypoint"}.`;
+    if (t < fadeB && (removed.size || other.length)) return st.method === "drag" ? "Dragging: the wire follows the cursor and pushes its neighbours." : "Shoving: other nets' wires are moved out of the way.";
+    const rf = seg(t, hasOwn ? 0.4 : 0.15, 0.9);
+    if (rf < 1) return st.method === "drag" ? "Dragging: the wire follows the cursor." : "Laying the new wire. It keeps the required gap from everything else.";
+    return prop.add.length || prop.remove.length ? `Done: ${prop.add.length} piece${prop.add.length === 1 ? "" : "s"} added, ${prop.remove.length} removed.` : "Done: nothing to change, the wire already exists.";
+  }
+
+  function draw() {
+    const { w, h } = fit();
+    const { board, removed, other, chain, vias, startPt, endPt, error, st } = P;
+    ctx.clearRect(0, 0, w, h);
+    ctx.save();
+    for (const poly of board.outline) {
+      ctx.beginPath(); poly.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1]))); ctx.closePath();
+      ctx.fillStyle = css("--board"); ctx.fill(); ctx.strokeStyle = css("--edge"); ctx.lineWidth = 2; ctx.stroke();
+    }
+    for (const k of board.keepouts || []) {
+      ctx.beginPath(); k.polygon.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1]))); ctx.closePath();
+      ctx.fillStyle = css("--keepout"); ctx.globalAlpha = 0.22; ctx.fill(); ctx.globalAlpha = 1; ctx.strokeStyle = css("--keepout"); ctx.setLineDash([4, 3]); ctx.stroke(); ctx.setLineDash([]);
+    }
+    ctx.restore();
+    for (const c of board.copper || []) {
+      ctx.beginPath(); c.polygon.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1]))); ctx.closePath();
+      ctx.fillStyle = layerCol(c.layer); ctx.globalAlpha = 0.7; ctx.fill(); ctx.globalAlpha = 1;
+    }
+
+    const isApply = st.method === "apply", hasOwn = chain.length > 0;
+    const fadeA = isApply ? 0 : 0.15, fadeB = isApply ? 0.5 : 0.4;
+    const xf = seg(t, fadeA, fadeB);
+    const rf = seg(t, hasOwn ? 0.4 : fadeA, 0.9);
+
+    for (const tr of board.tracks) {
+      if (removed.has(tr.id)) drawTrack(tr, { alpha: 0.9 * (1 - xf) + 0.08, dash: xf > 0 ? [6, 5] : null, halo: xf > 0 && xf < 1 ? css("--gone") : null });
+      else drawTrack(tr, { alpha: 0.85 });
+    }
+    for (const v of board.vias) drawVia(v, removed.has(v.id) ? 0.9 * (1 - xf) + 0.08 : 0.9);
+    for (const p of board.pads) drawPad(p);
+    for (const a of other) {
+      if (a.kind === "track") drawTrack(a, { alpha: xf, halo: xf < 1 ? css("--new") : null });
+      else drawVia(a, xf, xf < 1 ? css("--new") : null);
+    }
+    let cursor = startPt;
+    for (const c of chain) {
+      if (rf <= c.t0) continue;
+      const f = Math.min(1, (rf - c.t0) / (c.t1 - c.t0));
+      drawTrack(c, { frac: f, halo: css("--new") });
+      if (f < 1) {
+        if (c.mid) { const a = arcOf(c.start, c.mid, c.end); const ang = a.a0 + a.sweep * f; cursor = [a.cx + a.r * Math.cos(ang), a.cy + a.r * Math.sin(ang)]; }
+        else cursor = [c.start[0] + (c.end[0] - c.start[0]) * f, c.start[1] + (c.end[1] - c.start[1]) * f];
+      } else cursor = c.end;
+    }
+    for (const { v, at } of vias) if (rf >= at) drawVia(v, Math.min(1, (rf - at) * 8 + 0.2), css("--new"));
+    if (st.method === "drag" && startPt && endPt) cursor = [startPt[0] + (endPt[0] - startPt[0]) * rf, startPt[1] + (endPt[1] - startPt[1]) * rf];
+
+    if (error && startPt && endPt) {
+      const f = seg(t, 0.15, 0.55);
+      ctx.save(); ctx.setLineDash([8, 6]); ctx.lineWidth = 2.5; ctx.strokeStyle = f < 1 ? css("--edge") : css("--err");
+      ctx.beginPath(); ctx.moveTo(X(startPt[0]), Y(startPt[1])); ctx.lineTo(X(startPt[0] + (endPt[0] - startPt[0]) * f), Y(startPt[1] + (endPt[1] - startPt[1]) * f)); ctx.stroke();
+      ctx.restore();
+      if (t > 0.55) {
+        ctx.save(); ctx.font = `500 14px ${css("--mono")}`; ctx.fillStyle = css("--err"); ctx.textAlign = "center";
+        ctx.fillText(`✕ ${error.code === "collision" ? "would touch another wire" : "no way through"}`, X((startPt[0] + endPt[0]) / 2), Y((startPt[1] + endPt[1]) / 2) - 14); ctx.restore();
+      }
+    }
+
+    const pulse = (Math.sin(t * Math.PI * 6) + 1) / 2;
+    if (!isApply) {
+      marker(startPt, t < 0.15 ? pulse : 0, st.method === "drag" ? "grab here" : "start");
+      marker(endPt, t < 0.15 ? pulse : 0, st.method === "drag" ? "drop here" : "end");
+    }
+    if (!error && !isApply && cursor && rf > 0 && rf < 1) {
+      ctx.save(); ctx.fillStyle = css("--fg"); ctx.beginPath(); ctx.arc(X(cursor[0]), Y(cursor[1]), 5, 0, 7); ctx.fill(); ctx.restore();
+    }
+    ctx.save(); ctx.font = `500 13px ${css("--mono")}`; ctx.fillStyle = css("--fg"); ctx.textAlign = "left";
+    ctx.fillText(caption(), 14, h - 14); ctx.restore();
+    ctx.save(); ctx.font = `11px ${css("--mono")}`; ctx.fillStyle = css("--muted"); ctx.textAlign = "right";
+    ctx.fillText(`${mm(P.bb.x1 - P.bb.x0)} × ${mm(P.bb.y1 - P.bb.y0)} mm · ${board.layers.length} copper sides`, w - 14, 20); ctx.restore();
+  }
+
+  // ---------- the side panel, in words ----------
+  function where(ref) {
+    if (!ref) return null;
+    if (ref.pad) return `pad <strong>${esc(ref.pad)}</strong>`;
+    return `an empty spot at <strong>${mm(ref.point[0])}, ${mm(ref.point[1])} mm</strong>`;
+  }
+  function asked(st) {
+    const p = st.params;
+    if (st.method === "apply") return `Make the last proposal permanent: take out ${p.proposal.remove.length} wire${p.proposal.remove.length === 1 ? "" : "s"}, put in ${p.proposal.add.length} piece${p.proposal.add.length === 1 ? "" : "s"}.`;
+    if (st.method === "drag") {
+      const mode = p.mode === "walkaround" ? "Go around whatever is in the way." : "Push other wires aside as it moves.";
+      return `Grab wire piece <strong>${esc(p.item)}</strong>${p.from ? ` at ${mm(p.from[0])}, ${mm(p.from[1])} mm` : ""} and drag it to <strong>${mm(p.to[0])}, ${mm(p.to[1])} mm</strong>. ${mode}`;
+    }
+    const parts = [`Connect ${where(p.start)} to ${p.end ? where(p.end) : "the waypoint"} on the <strong>${side(p.layer)}</strong>, for wire <strong>${esc(p.net)}</strong>.`];
+    for (const wp of p.waypoints || []) parts.push(wp.via ? `On the way, drop through a via at ${mm(wp.point[0])}, ${mm(wp.point[1])} mm and continue on the ${side(wp.layer)}.` : `Pass through ${mm(wp.point[0])}, ${mm(wp.point[1])} mm.`);
+    parts.push(p.mode === "shove" ? "Push other wires aside if needed." : p.mode === "mark_obstacles" ? "Straight line only: refuse if it would touch anything." : "Go around anything in the way.");
+    if (p.step) parts.push(`Feed the cursor ${mm(p.step)} mm at a time, like a mouse drag.`);
+    return parts.join(" ");
+  }
+  function cameBack(st, prop) {
+    if (!st.response.ok) return ERRORS[st.response.error.code] || esc(st.response.error.message || st.response.error.code);
+    if (st.method === "apply") return `The board now contains the new wires. Later requests see them.`;
+    const tracks = prop.add.filter(a => a.kind === "track").length, vias = prop.add.filter(a => a.kind === "via").length;
+    if (!tracks && !vias && !prop.remove.length) return "Nothing to do: that connection already exists.";
+    const nets = [...new Set(prop.add.filter(a => a.net !== P.net).map(a => a.net))];
+    const bits = [];
+    if (tracks) bits.push(`${tracks} wire piece${tracks === 1 ? "" : "s"} laid down`);
+    if (vias) bits.push(`${vias} via${vias === 1 ? "" : "s"} placed`);
+    if (prop.remove.length) bits.push(nets.length ? `${prop.remove.length} wire${prop.remove.length === 1 ? "" : "s"} of net ${nets.join(", ")} moved aside` : `${prop.remove.length} old wire${prop.remove.length === 1 ? "" : "s"} removed`);
+    return bits.join(", ") + ". Nothing changes on the board until this proposal is applied.";
+  }
+  function hl(obj) {
+    return esc(JSON.stringify(obj, null, 1))
+      .replace(/"([^"]+)":/g, '<span class="k">"$1"</span>:')
+      .replace(/: "([^"]*)"/g, ': <span class="s">"$1"</span>')
+      .replace(/: (-?\d+(\.\d+)?)/g, ': <span class="n">$1</span>');
+  }
+  function renderSide() {
+    const { st, prop } = P;
+    document.getElementById("asked").innerHTML = asked(st);
+    const rev = st.params.base_revision != null ? st.params.base_revision : (st.response.result && st.response.result.revision != null ? st.response.result.revision : 0);
+    document.getElementById("rev").textContent = `board revision ${rev}`;
+    const status = document.getElementById("status");
+    status.textContent = st.response.ok ? "done" : "refused"; status.className = "pill " + (st.response.ok ? "ok" : "err");
+    const tiles = document.getElementById("tiles");
+    if (st.response.ok && st.method !== "apply") {
+      tiles.hidden = false;
+      tiles.innerHTML = `<div><b>${prop.add.filter(a => a.kind === "track").length}</b><span>wire pieces added</span></div><div><b>${prop.remove.length}</b><span>wires removed</span></div><div><b>${prop.add.filter(a => a.kind === "via").length}</b><span>vias (side switches)</span></div>`;
+    } else tiles.hidden = true;
+    const said = document.getElementById("said");
+    said.innerHTML = cameBack(st, prop); said.className = "said" + (st.response.ok ? "" : " err");
+    const req = { id: st.response.id, protocol_version: 2, method: st.method, params: st.params };
+    if (st.method === "apply") req.params = { base_revision: st.params.base_revision, proposal: `(the previous proposal: ${st.params.proposal.remove.length} remove, ${st.params.proposal.add.length} add)` };
+    document.getElementById("req").innerHTML = hl(req);
+    document.getElementById("resp").innerHTML = hl(st.response);
+  }
+
+  // ---------- loop ----------
+  const scrub = document.getElementById("scrub");
+  function frame(ts) {
+    if (playing) {
+      if (lastTs != null) t += (ts - lastTs) / STEP_MS * speed;
+      lastTs = ts;
+      if (t >= 1.3) {
+        const s = DATA[scen];
+        if (step + 1 < s.steps.length) select(scen, step + 1);
+        else select((scen + 1) % DATA.length, 0);
+      }
+      scrub.value = String(Math.round(Math.min(1, t) * 1000));
+    }
+    draw();
+    requestAnimationFrame(frame);
+  }
+  document.getElementById("play").addEventListener("click", (e) => {
+    if (t >= 1) { t = 0; playing = true; } else playing = !playing;
+    lastTs = null; e.currentTarget.textContent = playing ? "Pause" : "Play";
+  });
+  scrub.addEventListener("input", () => { t = Number(scrub.value) / 1000; playing = false; lastTs = null; document.getElementById("play").textContent = "Play"; });
+  document.getElementById("speed").addEventListener("change", (e) => { speed = Number(e.target.value); });
+  window.addEventListener("resize", () => draw());
+
+  if (DATA.length) {
+    select(0, 0);
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) { playing = false; t = 1; document.getElementById("play").textContent = "Replay"; }
+    requestAnimationFrame(frame);
+  } else document.getElementById("blurb").textContent = "data.js is missing: run tools/demo_data.py first.";
+})();
+</script>
+</body>
+</html>
