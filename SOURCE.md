@@ -10,8 +10,8 @@ Horizon EDA's copy of PNS; it was replaced by KiCad 10.0.7.
 ## The vendored release
 
 <!-- BEGIN update_kicad.sh (generated; do not edit) -->
-- **Tag:** `10.0.7`
-- **Commit:** `69cafb907ebc09e7722a2a464b1d466fc2e3608d` (2026-10-06)
+- **Tag:** `10.0.8`
+- **Commit:** `e432beac2668303194ba2040274f9e5efe773fc0` (2026-10-29)
 - **Repository:** https://gitlab.com/kicad/code/kicad.git
 - **Files:** 160 (tools/kicad_closure.txt), each with its sha256 and licence in `vendor/kicad.manifest`
 - **Patches:** 4 (patches/series)
