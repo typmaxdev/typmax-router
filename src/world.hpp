@@ -110,9 +110,10 @@ public:
     PNS::NODE* GetWorld() const override { return m_world; }
     PNS::RULE_RESOLVER* GetRuleResolver() override;
     PNS::DEBUG_DECORATOR* GetDebugDecorator() override { return nullptr; }
-    // length tuning only; the service does not tune
-    long long CalculateRoutedPathLength(const PNS::ITEM_SET&, const PNS::SOLID*, const PNS::SOLID*,
-                                        const NETCLASS*) override { return 0; }
+    // The meander placers' length: track length only (world.cpp), no via
+    // height, no pad-to-die, nothing clipped inside a pad (PROTOCOL.md, tune).
+    long long CalculateRoutedPathLength(const PNS::ITEM_SET& aLine, const PNS::SOLID*, const PNS::SOLID*,
+                                        const NETCLASS*) override;
     int64_t CalculateRoutedPathDelay(const PNS::ITEM_SET&, const PNS::SOLID*, const PNS::SOLID*,
                                      const NETCLASS*) override { return 0; }
     int64_t CalculateLengthForDelay(int64_t, int, bool, int, int, const NETCLASS*) override { return 0; }
@@ -154,6 +155,7 @@ public:
         return it == m_by_id.end() ? nullptr : it->second;
     }
     BOARD_ITEM* virtual_parent() { return m_virtual; }
+    RESOLVER& resolver() { return *m_resolver; }
     const Board& board() const { return m_board; }
     int nlayers() const { return static_cast<int>(m_board.layers.size()); }
 
@@ -236,9 +238,28 @@ public:
             rv = -1;
         return rv;
     }
-    PNS::NET_HANDLE DpCoupledNet(PNS::NET_HANDLE) override { return nullptr; }
-    int DpNetPolarity(PNS::NET_HANDLE) override { return 0; }
-    bool DpNetPair(const PNS::ITEM*, PNS::NET_HANDLE&, PNS::NET_HANDLE&) override { return false; }
+    // The one differential pair a request names (route_pair, tune): KiCad
+    // finds pairs by net-name suffix; the service takes the client's word.
+    void set_pair(PNS::NET_HANDLE p, PNS::NET_HANDLE n)
+    {
+        m_pair_p = p;
+        m_pair_n = n;
+    }
+    PNS::NET_HANDLE DpCoupledNet(PNS::NET_HANDLE h) override
+    {
+        if (!h || !m_pair_p)
+            return nullptr;
+        return h == m_pair_p ? m_pair_n : h == m_pair_n ? m_pair_p : nullptr;
+    }
+    int DpNetPolarity(PNS::NET_HANDLE h) override { return h && h == m_pair_p ? 1 : h && h == m_pair_n ? -1 : 0; }
+    bool DpNetPair(const PNS::ITEM* a, PNS::NET_HANDLE& p, PNS::NET_HANDLE& n) override
+    {
+        if (!a || !m_pair_p || (a->Net() != m_pair_p && a->Net() != m_pair_n))
+            return false;
+        p = m_pair_p;
+        n = m_pair_n;
+        return true;
+    }
     int NetCode(PNS::NET_HANDLE h) override { return m_iface.GetNetCode(h); }
     wxString NetName(PNS::NET_HANDLE h) override { return m_iface.GetNetName(h); }
     bool IsInNetTie(const PNS::ITEM*) override { return false; }
@@ -295,6 +316,7 @@ private:
     }
 
     IFACE& m_iface;
+    PNS::NET_HANDLE m_pair_p = nullptr, m_pair_n = nullptr;
 };
 
 // Deterministic proposal from a session's captured commit (world.cpp).

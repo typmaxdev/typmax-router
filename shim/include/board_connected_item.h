@@ -18,7 +18,8 @@ public:
     bool IsConnected() const override { return true; }
     NETINFO_ITEM* GetNet() const { return m_net; }
     int GetNetCode() const { return m_net ? m_net->GetNetCode() : -1; }
-    // Length tuning only (the meander placers); the service does not tune.
+    // The meander placers (`tune`) only: no net class, since the service counts
+    // track length only and never asks a class for a delay (world.cpp).
     NETCLASS* GetEffectiveNetClass() const { return nullptr; }
 
 protected:

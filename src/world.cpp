@@ -136,6 +136,24 @@ IFACE::~IFACE() { delete m_resolver; }
 
 PNS::RULE_RESOLVER* IFACE::GetRuleResolver() { return m_resolver; }
 
+// Track length only, as PROTOCOL.md's `tune` says: every line, segment and arc
+// of the path at its drawn length (an arc's along its sweep); vias add 0, pads
+// add no pad-to-die, and no part inside a pad is clipped off.
+long long IFACE::CalculateRoutedPathLength(const PNS::ITEM_SET& aLine, const PNS::SOLID*, const PNS::SOLID*,
+                                           const NETCLASS*)
+{
+    long long total = 0;
+    for (const PNS::ITEM* it : aLine.CItems()) {
+        switch (it->Kind()) {
+        case PNS::ITEM::LINE_T: total += static_cast<const PNS::LINE*>(it)->CLine().Length(); break;
+        case PNS::ITEM::SEGMENT_T: total += static_cast<const PNS::SEGMENT*>(it)->Seg().Length(); break;
+        case PNS::ITEM::ARC_T: total += std::llround(static_cast<const PNS::ARC*>(it)->CArc().GetLength()); break;
+        default: break; // vias and pads: no track length
+        }
+    }
+    return total;
+}
+
 // A polygon as KiCad syncs a keepout: its triangles, one locked SOLID each.
 // IsKeepout makes them block every track and via, inside as well as across.
 void IFACE::add_solid_poly(PNS::NODE* n, const std::vector<Pt>& poly, int layer, BOARD_ITEM* par,

@@ -61,6 +61,12 @@ def arc(tid, net, layer, a, m, b, w=0.25):
     return t
 
 
+def pair_pads():
+    """DP/DN pads at both ends of a 20 mm run, 0.5 mm apart."""
+    return [smd("U1.1", "U1", "1", "DP", 5, 10, 0.3, 0.3), smd("U1.2", "U1", "2", "DN", 5, 10.5, 0.3, 0.3),
+            smd("U2.1", "U2", "1", "DP", 25, 10, 0.3, 0.3), smd("U2.2", "U2", "2", "DN", 25, 10.5, 0.3, 0.3)]
+
+
 def board(pads, tracks=(), vias=(), keepouts=(), w=30, h=20):
     return {"layers": ["F.Cu", "B.Cu"], "outline": outline(w, h), "rules": RULES,
             "pads": list(pads), "tracks": list(tracks), "vias": list(vias), "keepouts": list(keepouts)}
@@ -127,6 +133,35 @@ BOARDS = {
         smd("U2.1", "U2", "1", "A", 25, 10),
     ], tracks=[
         arc("arc-b1", "B", "F.Cu", (12, 13), (15, 8), (18, 13)),
+    ]),
+    # A differential pair DP/DN: two pad pairs 0.5 mm apart (a 0.25 mm gap
+    # between 0.25 mm members), a net-B pad on the straight line between them,
+    # and a lone DN pad far from any DP pad (pair_not_coupled).
+    "pair": board(pair_pads() + [
+        smd("U3.1", "U3", "1", "B", 15, 10.25, 2, 2),
+        smd("U4.1", "U4", "1", "DN", 15, 17, 0.3, 0.3),
+    ]),
+    # The pair's straight path crossed by a net-C track shove can push aside.
+    "pair_shove": board(pair_pads() + [
+        tht("J1.1", "J1", "1", "C", 10, 15),
+        tht("J2.1", "J2", "1", "C", 20, 15),
+    ], tracks=[
+        track("trk-c1", "C", "F.Cu", (10, 15), (10, 10.8)),
+        track("trk-c2", "C", "F.Cu", (10, 10.8), (20, 10.8)),
+        track("trk-c3", "C", "F.Cu", (20, 10.8), (20, 15)),
+    ]),
+    # One straight net-A track, 20 mm pad to pad, to meander.
+    "tune": board([
+        smd("U1.1", "U1", "1", "A", 5, 10, 0.3, 0.3),
+        smd("U2.1", "U2", "1", "A", 25, 10, 0.3, 0.3),
+        smd("U3.1", "U3", "1", "B", 15, 12.5, 1, 1),
+    ], tracks=[
+        track("trk-a1", "A", "F.Cu", (5, 10), (25, 10)),
+    ]),
+    # The DP/DN pair already routed, straight and coupled, to tune as a pair.
+    "tune_pair": board(pair_pads(), tracks=[
+        track("trk-p1", "DP", "F.Cu", (5, 10), (25, 10)),
+        track("trk-n1", "DN", "F.Cu", (5, 10.5), (25, 10.5)),
     ]),
 }
 

@@ -830,11 +830,324 @@ def t_timeout(binary):
     check(c.proc.wait(timeout=10) == 3, "the service exits after a timeout")
 
 
+# ---- route_pair, tune, ping.methods (issue #10) --------------------------------
+
+METHODS = ["ping", "stats", "load_board", "route", "drag", "apply", "route_pair", "tune"]
+PAIR = {"p": "DP", "n": "DN", "layer": "F.Cu", "gap": 250_000,
+        "start": {"p": {"pad": "U1.1"}, "n": {"pad": "U1.2"}},
+        "end": {"p": {"pad": "U2.1"}, "n": {"pad": "U2.2"}}}
+TUNE = {"aim": "length", "net": "A", "target": 25 * MM, "tolerance": 100_000, "track": "trk-a1",
+        "from": [8 * MM, 10 * MM], "to": [22 * MM, 10 * MM]}
+TUNE_PAIR = {"aim": "pair_length", "p": "DP", "n": "DN", "target": 24 * MM, "tolerance": 100_000,
+             "track": "trk-p1", "from": [8 * MM, 10 * MM], "to": [22 * MM, 10 * MM]}
+
+
+def pad_pos(b, pid):
+    return next(p["position"] for p in b["pads"] if p["id"] == pid)
+
+
+def seg_gap(s, t):
+    """Edge-to-edge distance of two straight tracks."""
+    return drc_lite._dist(("capsule", (s["start"], s["end"], s["width"] / 2)),
+                          ("capsule", (t["start"], t["end"], t["width"] / 2)))
+
+
+def net_length(board_, net):
+    """Track length of a net (every straight track; the boards here hold no arcs)."""
+    return sum(math.dist(t["start"], t["end"]) for t in board_["tracks"] if t["net"] == net)
+
+
+def track_count(board_, net):
+    return sum(1 for t in board_["tracks"] if t["net"] == net)
+
+
+def t_ping_methods(binary):
+    """ping lists every method, and every listed method is one the binary serves."""
+    with RouterClient(binary) as c:
+        got = c.call("ping")["methods"]
+        check(got == METHODS, f"ping.methods: {got}")
+        for m in got:
+            r = c.request(m, {})
+            check(r["ok"] or r["error"]["code"] != "unknown_method", f"{m} is listed but unknown")
+
+
+def t_route_pair(binary):
+    """Walkaround around a pad: both members connected end to end, clean, at the
+    class width, never closer to each other than the gap, and applicable."""
+    b = board("pair")
+    with RouterClient(binary) as c:
+        c.call("load_board", {"board": b})
+        res = c.call("route_pair", PAIR)
+        pr = res["proposal"]
+        check(pr["remove"] == [], f"walkaround removed {pr['remove']}")
+        check({a["net"] for a in pr["add"]} == {"DP", "DN"}, f"nets: {pr['add']}")
+        check(all(a["width"] == 250_000 for a in pr["add"] if a["kind"] == "track"), "a member off its class width")
+        check(connected(pr, "DP", pad_pos(b, "U1.1"), pad_pos(b, "U2.1")), "DP not connected pad to pad")
+        check(connected(pr, "DN", pad_pos(b, "U1.2"), pad_pos(b, "U2.2")), "DN not connected pad to pad")
+        clean(b, pr, "route_pair walkaround")
+        ps = [a for a in pr["add"] if a["net"] == "DP"]
+        ns = [a for a in pr["add"] if a["net"] == "DN"]
+        closest = min(seg_gap(s, t) for s in ps for t in ns)
+        check(closest >= 250_000 - 1_000, f"members {closest:.0f} nm apart, under the 250000 nm gap")
+        again = c.request("route_pair", PAIR, raw_response=True)
+        check(json.loads(again)["result"] == res, "the same route_pair twice differs")
+        applied = c.call("apply", {"proposal": pr, "base_revision": res["revision"]})
+        check(applied["added"] == len(pr["add"]), f"apply: {applied}")
+
+
+def t_route_pair_shove(binary):
+    """Shove pushes the net-C track out of the pair's way; walkaround leaves it."""
+    b = board("pair_shove")
+    with RouterClient(binary) as c:
+        c.call("load_board", {"board": b})
+        pr = c.call("route_pair", dict(PAIR, mode="shove"))["proposal"]
+        check("trk-c2" in pr["remove"], f"shove did not move trk-c2: {pr['remove']}")
+        check(any(a["net"] == "C" for a in pr["add"]), "shove dropped net C's copper")
+        check(connected(pr, "DP", pad_pos(b, "U1.1"), pad_pos(b, "U2.1")), "shove: DP not connected")
+        check(connected(pr, "DN", pad_pos(b, "U1.2"), pad_pos(b, "U2.2")), "shove: DN not connected")
+        clean(b, pr, "route_pair shove")
+        pr = c.call("route_pair", PAIR)["proposal"]
+        check(pr["remove"] == [] and {a["net"] for a in pr["add"]} == {"DP", "DN"}, f"walkaround: {pr['remove']}")
+        clean(b, pr, "route_pair walkaround on the shove board")
+
+
+def pair_via_request(via_gap=None):
+    r = dict(PAIR, via_allowed=True,
+             waypoints=[{"point": [8 * MM, 10_250_000], "via": True, "layer": "B.Cu"}],
+             end={"p": {"point": [25 * MM, 4 * MM]}, "n": {"point": [25 * MM, 4_500_000]}})
+    if via_gap is not None:
+        r["via_gap"] = via_gap
+    return r
+
+
+def t_route_pair_vias(binary):
+    """Twin vias at a waypoint, one per member, at via_gap edge to edge (absent:
+    the least the rules admit), then free-point ends on the other layer."""
+    b = board("pair_shove")
+    with RouterClient(binary) as c:
+        c.call("load_board", {"board": b})
+        for via_gap, pitch in ((None, 600_000 + 200_000), (300_000, 600_000 + 300_000)):
+            pr = c.call("route_pair", pair_via_request(via_gap))["proposal"]
+            vias = [a for a in pr["add"] if a["kind"] == "via"]
+            check(sorted(v["net"] for v in vias) == ["DN", "DP"], f"vias: {vias}")
+            check(all(v["layers"] == ["F.Cu", "B.Cu"] and v["diameter"] == 600_000 for v in vias), f"vias: {vias}")
+            d = math.dist(vias[0]["position"], vias[1]["position"])
+            check(abs(d - pitch) <= 2, f"via_gap {via_gap}: vias {d:.0f} nm apart, want {pitch}")
+            check(connected(pr, "DP", pad_pos(b, "U1.1"), vias[1]["position"] if vias[1]["net"] == "DP"
+                            else vias[0]["position"]), "DP does not reach its via")
+            for net, end in (("DP", [25 * MM, 4 * MM]), ("DN", [25 * MM, 4_500_000])):
+                check(any(a["kind"] == "track" and a["net"] == net and a["layer"] == "B.Cu" and end in (a["start"], a["end"])
+                          for a in pr["add"]), f"{net} does not end at its free point on B.Cu")
+            clean(b, pr, f"route_pair vias (via_gap {via_gap})")
+        req = pair_via_request()
+        del req["via_allowed"]
+        expect_error(c, "route_pair", req, "via_not_allowed")
+
+
+def t_route_pair_dangling(binary):
+    """No end: the pair ends at its last waypoint, its centreline there."""
+    with RouterClient(binary) as c:
+        c.call("load_board", {"board": board("pair")})
+        req = {k: v for k, v in PAIR.items() if k != "end"}
+        req["waypoints"] = [{"point": [10 * MM, 6 * MM]}]
+        pr = c.call("route_pair", req)["proposal"]
+        ends = {}
+        for a in pr["add"]:
+            ends.setdefault(a["net"], set()).update({tuple(a["start"]), tuple(a["end"])})
+        far = {n: max(e, key=lambda p: math.dist(p, (5 * MM, 10 * MM))) for n, e in ends.items()}
+        mid = [(far["DP"][0] + far["DN"][0]) / 2, (far["DP"][1] + far["DN"][1]) / 2]
+        check(math.dist(mid, [10 * MM, 6 * MM]) <= 2, f"pair centreline ends at {mid}, not the waypoint")
+        clean(board("pair"), pr, "dangling pair")
+
+
+def t_route_pair_errors(binary):
+    """Every refusal of route_pair, each with its code."""
+    with RouterClient(binary) as c:
+        expect_error(c, "route_pair", PAIR, "no_board")
+        b = board("pair")
+        c.call("load_board", {"board": b})
+        bad = [dict(PAIR, n="DP"), {k: v for k, v in PAIR.items() if k != "gap"}, dict(PAIR, gap=0),
+               dict(PAIR, gap=1.5e5), dict(PAIR, mode="mark_obstacles"), dict(PAIR, start={"p": {"pad": "U1.1"}}),
+               dict(PAIR, start={"p": {"pad": "U1.1"}, "n": {"pad": "U1.2", "point": [0, 0]}}),
+               {k: v for k, v in PAIR.items() if k != "end"}, dict(PAIR, layer="In9.Cu"), dict(PAIR, via_gap=-1),
+               dict(PAIR, waypoints=[{"point": [10 * MM, 6 * MM]}, {"point": [10 * MM, 6 * MM]}])]
+        for req in bad:
+            expect_error(c, "route_pair", req, "invalid_params")
+        expect_error(c, "route_pair", dict(PAIR, p="ZZ"), "unknown_net")
+        expect_error(c, "route_pair", dict(PAIR, start={"p": {"pad": "U9.9"}, "n": {"pad": "U1.2"}}), "unknown_item")
+        err = expect_error(c, "route_pair", dict(PAIR, start={"p": {"pad": "U1.2"}, "n": {"pad": "U1.1"}}),
+                           "pair_mismatch")
+        check("U1.2" in err["message"], f"pair_mismatch names the pad: {err}")
+        expect_error(c, "route_pair", dict(PAIR, end={"p": {"pad": "U2.1"}, "n": {"pad": "U3.1"}}), "pair_mismatch")
+        expect_error(c, "route_pair", dict(PAIR, layer="B.Cu"), "layer_mismatch")
+        expect_error(c, "route_pair", dict(PAIR, gap=199_999), "gap_too_small")
+        c.call("route_pair", dict(PAIR, gap=200_000))  # at the clearance: admitted
+        expect_error(c, "route_pair", dict(PAIR, via_gap=199_999), "gap_too_small")
+        expect_error(c, "route_pair", dict(PAIR, end={"p": {"pad": "U2.1"}, "n": {"pad": "U4.1"}}), "pair_not_coupled")
+        # a free point of DN farther from U1.1 than U1.2 is: the engine couples U1.2
+        expect_error(c, "route_pair", dict(PAIR, start={"p": {"pad": "U1.1"}, "n": {"point": [5 * MM, 11_500_000]}}),
+                     "pair_not_coupled")
+        wide = board("pair")
+        wide["rules"] = dict(wide["rules"], net_classes={"DN": "Power"})
+        c.call("load_board", {"board": wide})
+        expect_error(c, "route_pair", PAIR, "pair_class_mismatch")
+        boxed = board("pair")
+        boxed["tracks"] = [{"id": f"ring-{k}", "net": "B", "layer": "F.Cu", "start": a, "end": z, "width": 250_000}
+                           for k, (a, z) in enumerate([([3 * MM, 8 * MM], [7 * MM, 8 * MM]), ([7 * MM, 8 * MM], [7 * MM, 13 * MM]),
+                                                       ([7 * MM, 13 * MM], [3 * MM, 13 * MM]), ([3 * MM, 13 * MM], [3 * MM, 8 * MM])])]
+        c.call("load_board", {"board": boxed})
+        expect_error(c, "route_pair", PAIR, "unroutable")
+        covered = board("pair")
+        covered["copper"] = [{"id": "logo-1", "net": "B", "layer": "F.Cu",
+                              "polygon": [[4_900_000, 9_900_000], [5_100_000, 9_900_000], [5 * MM, 10_100_000]]}]
+        c.call("load_board", {"board": covered})
+        expect_error(c, "route_pair", PAIR, "start_not_routable")
+
+
+def t_tune_length(binary):
+    """The single-track tuner: tuned within tolerance, `length` the track length
+    of what it proposes, clean; too long proposes nothing; too short says so."""
+    b = board("tune")
+    with RouterClient(binary) as c:
+        c.call("load_board", {"board": b})
+        res = c.call("tune", TUNE)
+        check(res["status"] == "tuned" and abs(res["length"] - TUNE["target"]) <= TUNE["tolerance"], f"tune: {res}")
+        check(res["proposal"]["remove"] == ["trk-a1"], f"remove: {res['proposal']['remove']}")
+        nb = clean(b, res["proposal"], "tune length")
+        got = net_length(nb, "A")
+        check(abs(got - res["length"]) <= track_count(nb, "A"), f"length {res['length']}, tracks measure {got:.0f}")
+        check(connected(res["proposal"], "A", [5 * MM, 10 * MM], [25 * MM, 10 * MM]), "tuned track broken")
+        far = c.call("tune", dict(TUNE, target=60 * MM))
+        check(far["status"] == "too_short" and far["length"] < 60 * MM and far["proposal"]["add"], f"too_short: {far}")
+        clean(b, far["proposal"], "tune too short")
+        short = c.call("tune", dict(TUNE, target=10 * MM))
+        check(short["status"] == "too_long" and short["length"] == 20 * MM, f"too_long: {short}")
+        check(short["proposal"] == {"remove": [], "add": []}, f"too_long proposes: {short['proposal']}")
+        line = c.request("tune", TUNE, raw_response=True)
+        check(json.loads(line)["result"] == res, "the same tune twice differs")
+        c.call("apply", {"proposal": res["proposal"], "base_revision": 0})
+
+
+def t_tune_keeps_untouched(binary):
+    """The engine rewrites the whole line it tunes; the tracks of it that come back
+    unchanged are neither removed nor added."""
+    b = board("tune")
+    b["pads"][1] = dict(b["pads"][1], position=[25 * MM, 12 * MM])
+    b["tracks"] = [{"id": "trk-a1", "net": "A", "layer": "F.Cu", "start": [5 * MM, 10 * MM], "end": [20 * MM, 10 * MM],
+                    "width": 250_000},
+                   {"id": "trk-a2", "net": "A", "layer": "F.Cu", "start": [20 * MM, 10 * MM], "end": [22 * MM, 12 * MM],
+                    "width": 250_000},
+                   {"id": "trk-a3", "net": "A", "layer": "F.Cu", "start": [22 * MM, 12 * MM], "end": [25 * MM, 12 * MM],
+                    "width": 250_000}]
+    with RouterClient(binary) as c:
+        c.call("load_board", {"board": b})
+        res = c.call("tune", dict(TUNE, target=24 * MM, **{"from": [7 * MM, 10 * MM], "to": [18 * MM, 10 * MM]}))
+        pr = res["proposal"]
+        check(res["status"] == "tuned" and pr["remove"] == ["trk-a1"], f"remove: {pr['remove']} ({res['status']})")
+        kept = {(tuple(t["start"]), tuple(t["end"])) for t in b["tracks"][1:]}
+        check(not any((tuple(a["start"]), tuple(a["end"])) in kept or (tuple(a["end"]), tuple(a["start"])) in kept
+                      for a in pr["add"]), "an unchanged track came back as an add")
+        nb = clean(b, pr, "tune keeps untouched")
+        check(abs(net_length(nb, "A") - res["length"]) <= track_count(nb, "A"), "length of the line")
+
+
+def diagonal_legs(proposal, net):
+    return [abs(a["end"][0] - a["start"][0]) for a in proposal["add"]
+            if a["net"] == net and a["kind"] == "track" and a["end"][0] != a["start"][0] and a["end"][1] != a["start"][1]]
+
+
+def t_tune_shape(binary):
+    """corners, single_sided, amplitude and spacing reach the engine."""
+    b = board("tune")
+    with RouterClient(binary) as c:
+        c.call("load_board", {"board": b})
+        sq = c.call("tune", dict(TUNE, corners="square"))["proposal"]
+        ch = c.call("tune", dict(TUNE, corners="chamfer"))["proposal"]
+        legs_sq, legs_ch = diagonal_legs(sq, "A"), diagonal_legs(ch, "A")
+        check(legs_sq and min(legs_sq) >= 125_000 - 2, f"square corners under half the width: {min(legs_sq or [0])}")
+        check(max(legs_sq) < min(legs_ch), f"square corners not sharper than chamfer: {max(legs_sq)} vs {min(legs_ch)}")
+        one = c.call("tune", dict(TUNE, single_sided=True, amplitude=[300_000, 800_000], spacing=700_000))
+        check(one["status"] == "tuned", f"single-sided: {one['status']}")
+        ys = [p[1] for a in one["proposal"]["add"] for p in (a["start"], a["end"])]
+        check(min(ys) >= 10 * MM or max(ys) <= 10 * MM, "single_sided meanders on both sides")
+        check(max(abs(y - 10 * MM) for y in ys) <= 800_000 + 125_000, "amplitude over its max")
+        for pr in (sq, ch, one["proposal"]):
+            clean(b, pr, "tune shapes")
+
+
+def t_tune_pair(binary):
+    """Pair length (the longer member's) and skew (the tuned member less its partner)."""
+    b = board("tune_pair")
+    with RouterClient(binary) as c:
+        c.call("load_board", {"board": b})
+        res = c.call("tune", TUNE_PAIR)
+        check(res["status"] == "tuned" and abs(res["length"] - 24 * MM) <= 100_000, f"pair_length: {res}")
+        check(res["proposal"]["remove"] == ["trk-n1", "trk-p1"], f"remove: {res['proposal']['remove']}")
+        nb = clean(b, res["proposal"], "tune pair_length")
+        longer = max(net_length(nb, "DP"), net_length(nb, "DN"))
+        check(abs(longer - res["length"]) <= track_count(nb, "DP") + track_count(nb, "DN"),
+              f"pair length {res['length']}, the longer member measures {longer:.0f}")
+        for track, net in (("trk-p1", "DP"), ("trk-n1", "DN")):
+            y = 10 * MM if net == "DP" else 10_500_000
+            sk = c.call("tune", dict(TUNE_PAIR, aim="skew", target=1 * MM, track=track,
+                                     **{"from": [8 * MM, y], "to": [22 * MM, y]}))
+            check(sk["status"] == "tuned" and abs(sk["skew"] - 1 * MM) <= 100_000, f"skew {net}: {sk}")
+            check(sk["proposal"]["remove"] == [track], f"skew touched the partner: {sk['proposal']['remove']}")
+            nb = clean(b, sk["proposal"], f"tune skew {net}")
+            other = "DN" if net == "DP" else "DP"
+            got = net_length(nb, net)
+            check(abs(got - sk["length"]) <= track_count(nb, net), f"skew length {sk['length']} vs {got:.0f}")
+            check(abs(got - net_length(nb, other) - sk["skew"]) <= track_count(nb, net) + 1, f"skew {sk['skew']}")
+
+
+def t_tune_errors(binary):
+    """Every refusal of tune, each with its code."""
+    with RouterClient(binary) as c:
+        expect_error(c, "tune", TUNE, "no_board")
+        c.call("load_board", {"board": board("tune")})
+        bad = [{k: v for k, v in TUNE.items() if k != "aim"}, dict(TUNE, aim="width"), dict(TUNE, target=0),
+               dict(TUNE, target=1e7), dict(TUNE, tolerance=-1), dict(TUNE, p="A", n="B"),
+               dict(TUNE_PAIR, net="A"), dict(TUNE_PAIR, n="DP"), dict(TUNE, to=TUNE["from"]),
+               dict(TUNE, to=[22 * MM, 11 * MM]), dict(TUNE, mode="shove"), dict(TUNE, corners="round"),
+               dict(TUNE, amplitude=[800_000, 300_000]), dict(TUNE, amplitude=[0, 300_000]), dict(TUNE, spacing=0),
+               dict(TUNE, aim="skew", p="A", n="B", net=None, target=2_000_000_000),
+               {k: v for k, v in TUNE.items() if k != "from"}]
+        for req in bad:
+            expect_error(c, "tune", req, "invalid_params")
+        expect_error(c, "tune", dict(TUNE, track="nope"), "unknown_item")
+        expect_error(c, "tune", dict(TUNE, net="ZZ"), "unknown_net")
+        expect_error(c, "tune", dict(TUNE, net="B"), "net_mismatch")
+        expect_error(c, "tune", dict(TUNE_PAIR, p="A", n="B", track="trk-a1"), "pair_not_coupled")
+        locked = board("tune")
+        locked["tracks"][0]["locked"] = True
+        c.call("load_board", {"board": locked})
+        expect_error(c, "tune", TUNE, "locked")
+        # `from` on the track's copper off its centreline snaps onto it, there
+        # where `to` is: the engine has no span to tune
+        c.call("load_board", {"board": board("tune")})
+        expect_error(c, "tune", dict(TUNE, **{"from": [8 * MM, 10_100_000], "to": [8 * MM, 10 * MM]}), "tune_refused")
+        c.call("load_board", {"board": board("tune_pair")})
+        expect_error(c, "tune", dict(TUNE_PAIR, p="DP", n="A"), "unknown_net")
+        expect_error(c, "tune", dict(TUNE_PAIR, track="trk-n1", n="DX", p="DP"), "unknown_net")
+        uncoupled = board("tune_pair")
+        uncoupled["tracks"][1] = dict(uncoupled["tracks"][1], end=[25 * MM, 15 * MM])  # not parallel
+        c.call("load_board", {"board": uncoupled})
+        expect_error(c, "tune", TUNE_PAIR, "pair_not_coupled")
+        pm = board("tune_pair")
+        pm["tracks"].append({"id": "trk-x", "net": "A", "layer": "F.Cu", "start": [5 * MM, 18 * MM],
+                             "end": [25 * MM, 18 * MM], "width": 250_000})
+        c.call("load_board", {"board": pm})
+        expect_error(c, "tune", dict(TUNE_PAIR, track="trk-x", **{"from": [8 * MM, 18 * MM], "to": [22 * MM, 18 * MM]}),
+                     "pair_mismatch")
+
+
 SYNTHETIC = [t_checker_self_test, t_protocol_errors, t_base_revision_required, t_walkaround, t_free_point_start, t_power_class_clearance,
              t_shove, t_shove_no_wall_clock, t_via, t_via_drill_vs_diameter, t_same_net_hole_to_hole, t_hole_clearance, t_edge_clearance,
              t_arc_obstacle, t_arc_obstacle_shove, t_keepout_interior, t_unroutable, t_zero_length_track, t_net_only_in_net_classes, t_drag_no_net,
              t_one_layer_via, t_via_at_trace_end, t_integers_only, t_utf8, t_duplicate_keys_linear, t_parse_is_time_limited,
-             t_max_line_is_bounded, t_argv_strict, t_internal_crash, t_engine_identity, t_error_detail, t_converter, t_fixture_zone_filter, t_spdx_headers, t_no_local_paths, t_patch_notices, t_timeout]
+             t_max_line_is_bounded, t_argv_strict, t_internal_crash, t_engine_identity, t_error_detail, t_converter, t_fixture_zone_filter, t_spdx_headers, t_no_local_paths, t_patch_notices, t_timeout,
+             t_ping_methods, t_route_pair, t_route_pair_shove, t_route_pair_vias, t_route_pair_dangling,
+             t_route_pair_errors, t_tune_length, t_tune_keeps_untouched, t_tune_shape, t_tune_pair, t_tune_errors]
 
 
 # ---- determinism ---------------------------------------------------------------
@@ -867,10 +1180,25 @@ def determinism_requests():
                               "waypoints": [{"point": [12 * MM, 6 * MM], "via": True, "layer": "B.Cu"}]})]),
         ("arc", [("route", A)]),
         ("arc_shove", [("route", dict(A, mode="shove"))]),
+        # issue #10: ping.methods, route_pair, tune
+        ("pair", [("ping", {}),
+                  ("route_pair", PAIR),
+                  ("route_pair", dict({k: v for k, v in PAIR.items() if k != "end"},
+                                      waypoints=[{"point": [10 * MM, 6 * MM]}]))]),
+        ("pair_shove", [("route_pair", dict(PAIR, mode="shove")),
+                        ("apply_last", {})]),
+        ("pair_vias", [("route_pair", pair_via_request()),
+                       ("route_pair", pair_via_request(300_000))]),
+        ("tune", [("tune", TUNE),
+                  ("tune", dict(TUNE, corners="square", single_sided=True, amplitude=[300_000, 800_000],
+                                spacing=700_000)),
+                  ("tune", dict(TUNE, target=10 * MM))]),
+        ("tune_pair", [("tune", TUNE_PAIR),
+                       ("tune", dict(TUNE_PAIR, aim="skew", target=1 * MM))]),
     ]
 
 
-BOARD_OF = {"shove_drag": "shove", "arc_shove": "arc"}
+BOARD_OF = {"shove_drag": "shove", "arc_shove": "arc", "pair_vias": "pair_shove"}
 
 
 def run_steps(c, name, steps):
