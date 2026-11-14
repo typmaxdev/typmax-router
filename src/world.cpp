@@ -7,6 +7,7 @@
 #include "world.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdio>
 #include <tuple>
@@ -372,6 +373,8 @@ void IFACE::capture_add(PNS::ITEM* aItem)
         t.start = pt(s->Seg().A);
         t.end = pt(s->Seg().B);
         t.width = s->Width();
+        // the engine adds an item once and removes it before it adds that pointer again (PR #11 r2 R2-n2)
+        assert(m_added_tracks.count(aItem) == 0);
         m_added_tracks[aItem] = t;
         break;
     }
@@ -387,6 +390,8 @@ void IFACE::capture_add(PNS::ITEM* aItem)
         t.end = pt(sa.GetP1());
         t.has_mid = true;
         t.width = a->Width();
+        // the engine adds an item once and removes it before it adds that pointer again (PR #11 r2 R2-n2)
+        assert(m_added_tracks.count(aItem) == 0);
         m_added_tracks[aItem] = t;
         break;
     }
@@ -403,6 +408,8 @@ void IFACE::capture_add(PNS::ITEM* aItem)
             std::swap(v.layer_from, v.layer_to);
         check_layer(v.layer_from, n);
         check_layer(v.layer_to, n);
+        // the engine adds an item once and removes it before it adds that pointer again (PR #11 r2 R2-n2)
+        assert(m_added_vias.count(aItem) == 0);
         m_added_vias[aItem] = v;
         break;
     }

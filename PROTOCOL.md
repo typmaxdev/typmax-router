@@ -269,7 +269,7 @@ members' copper. It never changes the loaded board; `apply` does.
 | `p`, `n` | yes | the pair's two nets, different (else `invalid_params`); each carried by some item of the board (else `unknown_net`). The service couples exactly these two: no net-name suffix is read |
 | `layer` | yes | the layer the pair starts on |
 | `start` | yes | `{"p": end, "n": end}`, each end of `route`'s shape: `{"pad": id}` (on that member's net, else `pair_mismatch`; on `layer`, else `layer_mismatch`) or `{"point": [x, y]}` (the member's copper there, on `layer`, which the pair starts from as the engine does: from its free end; else a point of the member's net). The engine couples `start.p` with the **nearest item of net `n` of the same kind** (pad with pad, via with via, track with track; a free point counts as a pad): `start.n` must be that item, else `pair_not_coupled` |
-| `end` | no | the same shape; the pair lands on both ends, on the layer the last via waypoint names (else `layer`), and the same coupling rule holds. Omitted = the pair ends at its last waypoint (dangling) |
+| `end` | no | the same shape; the pair lands on both ends, on the layer the last via waypoint names (else `layer`), and the same coupling rule holds. **With an `end`, both members land on their end items, each joined to its start, or the answer is `unroutable`**: never a proposal without the end leg. Omitted = the pair ends at its last waypoint (dangling) |
 | `waypoints` | no | as `route`'s: up to 1000 `{"point": [x, y], "via": bool, "layer": name}`, each a click that fixes the pair so far; `point` is where the pair's **centreline** goes. The pair must reach it: a centreline that ends farther than half the pair's pitch ((`gap` + width) / 2) from the point is `unroutable`, as `route` refuses a waypoint its trace does not end on. `via: true` places twin through vias, one per member, `via_gap` apart, and continues on `layer`. A waypoint equal to the one before it is `invalid_params` |
 | `gap` | yes | the members' gap, edge to edge, nm. Under the larger of the two classes' `clearance` is `gap_too_small` (equal to it is admitted) |
 | `via_gap` | no | the twin vias' copper, edge to edge, nm, 1..1e8. Default, and least: what the rules admit, `max(clearance, hole_to_hole − 2a, hole_clearance − a)` with `a = (via_diameter − via_drill) / 2` (integer nm) and `clearance` the larger class's; under it is `gap_too_small` |
@@ -291,6 +291,12 @@ both members (P against N is two nets: the larger clearance), and the service's
 - Where the pair is coupled its members run at `gap`. Around an obstacle the
   engine walks each member on its own: a pair may split, one member each side
   of an obstacle, rather than go round it together (`tests/boards/pair.json`).
+- **Waypoints off the pads' line: unroutable before an `end`.** KiCad's pair placer cannot carry a pair on from a
+  leg it fixed on a diagonal: its gateways do not fit and it keeps its old head. A waypoint whose leg ends on a
+  diagonal (on the test boards: every waypoint off the straight line between the start and end pads, about a
+  thousand measured, walkaround and shove) therefore answers `unroutable` once an `end` (or a later waypoint) follows.
+  A pair with such a waypoint and no `end` is routed to it (dangling). Feeding the cursor toward the end in steps, and
+  starting the placer afresh from the fixed copper's free ends, were measured not to help.
 - **The proposal holds the final copper only.** The pair placer commits each fixed leg into the engine's world at
   once, and a later leg may merge, re-optimise or shove it again; the service drops such a leg from the proposal, so
   each member's copper is laid once.
@@ -420,6 +426,8 @@ serves the six methods of service 0.3.1).
   `tune_refused`.
 - `ping` carries `methods`.
 - Versioning names a new method as an additive change.
+- With an `end`, `route_pair` checks that both members reached their end items and that no member's copper is laid
+  twice; a waypoint off the pads' line followed by an `end` is `unroutable` (PR #11 review round 2).
 - No answer to an existing request changed beyond `engine.version` (and `ping`'s
   new key): the golden lines of the earlier requests differ from 0.3.1's only in
   the version string.

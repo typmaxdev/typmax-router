@@ -7,7 +7,11 @@
 #include "engine.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <map>
+#include <set>
 #include <stdexcept>
+#include <vector>
 
 #include <pns_diff_pair.h>
 #include <pns_diff_pair_placer.h>
@@ -30,6 +34,9 @@ using End = std::pair<VECTOR2I, PNS::ITEM*>;
 
 struct Ends {
     End p, n;
+    // where the engine lands each member on these ends (FindDpPrimitivePair's anchors): a pad's centre, a free
+    // point, a track's free end
+    VECTOR2I ap, an;
 };
 
 // Ends the routing session on every path out, a refusal included.
@@ -135,7 +142,7 @@ bool same_item(const PNS::ITEM* a, const PNS::ITEM* b)
 
 // The engine couples a P item with the nearest N item of the same kind
 // (DIFF_PAIR_PLACER::FindDpPrimitivePair); the request's N end must be it.
-void check_coupled(Session& s, const Ends& e, const std::string& which)
+void check_coupled(Session& s, Ends& e, const std::string& which)
 {
     PNS::DP_PRIMITIVE_PAIR found;
     wxString why;
@@ -146,12 +153,14 @@ void check_coupled(Session& s, const Ends& e, const std::string& which)
         throw RequestError("pair_not_coupled", which + ".n is not the end the engine couples with " + which
                                                        + ".p: it takes the nearest item of the n net of the "
                                                        "same kind (pad with pad, via with via, track with track)");
+    e.ap = found.AnchorP();
+    e.an = found.AnchorN();
 }
 
 Ends resolve_ends(Session& s, const Board& b, const PairEnd& e, const Member& p, const Member& n, int layer,
                   const std::string& which)
 {
-    Ends r{resolve_end(s, b, e.p, p, layer, which + ".p"), resolve_end(s, b, e.n, n, layer, which + ".n")};
+    Ends r{resolve_end(s, b, e.p, p, layer, which + ".p"), resolve_end(s, b, e.n, n, layer, which + ".n"), {}, {}};
     check_coupled(s, r, which);
     return r;
 }
@@ -213,14 +222,92 @@ void pair_waypoint(Session& s, const Board& b, const PairRequest& rq, size_t i, 
     }
 }
 
-void pair_finish(Session& s, const Ends& e, Mode m)
+// The members' head ends now: P's line's last point and N's (none while either holds no segment).
+std::optional<std::pair<VECTOR2I, VECTOR2I>> head_ends(PNS::ROUTER& r, PNS::NET_HANDLE p)
 {
-    const char* mode = m == Mode::Shove ? "shove" : "walkaround";
-    if (!s.router.Move(e.p.first, e.p.second))
-        throw refusal(s.router, "unroutable", std::string("PNS could not reach the end pair in mode ") + mode);
+    std::optional<VECTOR2I> hp, hn;
+    PNS::ITEM_SET ts = r.Placer()->Traces();
+    for (PNS::ITEM* it : ts.Items()) {
+        if (it->Kind() != PNS::ITEM::LINE_T || static_cast<PNS::LINE*>(it)->SegmentCount() == 0)
+            continue;
+        (it->Net() == p ? hp : hn) = static_cast<PNS::LINE*>(it)->CPoint(-1);
+    }
+    if (!hp || !hn)
+        return std::nullopt;
+    return std::make_pair(*hp, *hn);
+}
+
+// Whether the pair's heads end on the end pair's anchors: both members reached (PR #11 r2 R2-M1).
+bool reached(PNS::ROUTER& r, const Ends& e, PNS::NET_HANDLE p)
+{
+    const auto h = head_ends(r, p);
+    return h && h->first == e.ap && h->second == e.an;
+}
+
+// The last leg onto the end pair. After a waypoint fixed on a diagonal the placer's gateways do not fit, and it
+// answers true for a leg it did not lay: it keeps its old head and re-adds it (PR #11 r2 R2-M1). So the heads must end
+// on the end pair's anchors, as `route` checks its trace's end; short of them the answer is unroutable, never a
+// proposal without the leg. (Tried and measured not to help: the cursor fed toward the end in steps, and a placer
+// started afresh from the free ends of the copper fixed so far.)
+void pair_finish(Session& s, const Ends& e, PNS::NET_HANDLE p, Mode m)
+{
+    const std::string mode = m == Mode::Shove ? "shove" : "walkaround";
+    if (!s.router.Move(e.p.first, e.p.second) || !reached(s.router, e, p))
+        throw refusal(s.router, "unroutable", "PNS could not bring the pair onto its end pair in mode " + mode);
     // not forced: true only when the pair snapped onto its end primitives
     if (!s.router.FixRoute(e.p.first, e.p.second, false, false))
-        throw refusal(s.router, "unroutable", std::string("PNS could not land the pair on its ends in mode ") + mode);
+        throw refusal(s.router, "unroutable", "PNS could not land the pair on its ends in mode " + mode);
+}
+
+// Whether two straight tracks of one net and layer lie on one line and share a length: copper laid twice.
+bool laid_twice(const Track& a, const Track& b)
+{
+    if (a.net != b.net || a.layer != b.layer || a.has_mid || b.has_mid)
+        return false;
+    const double dx = static_cast<double>(a.end.x - a.start.x), dy = static_cast<double>(a.end.y - a.start.y);
+    const double len = std::hypot(dx, dy);
+    if (len == 0)
+        return false;
+    const auto off = [&](const Pt& q) { return std::abs((q.x - a.start.x) * dy - (q.y - a.start.y) * dx) / len; };
+    const auto along = [&](const Pt& q) { return ((q.x - a.start.x) * dx + (q.y - a.start.y) * dy) / len; };
+    if (off(b.start) > 2 || off(b.end) > 2)
+        return false;
+    const double lo = std::min(along(b.start), along(b.end)), hi = std::max(along(b.start), along(b.end));
+    return std::min(len, hi) - std::max(0.0, lo) > 2;
+}
+
+// Whether `net`'s added tracks join `from` to `to` (a walk over shared ends; a via joins its layers at its centre).
+bool joined(const Proposal& pr, const std::string& net, const VECTOR2I& from, const VECTOR2I& to)
+{
+    std::map<std::pair<int64_t, int64_t>, std::vector<std::pair<int64_t, int64_t>>> adj;
+    for (const Track& t : pr.add_tracks) {
+        if (t.net != net)
+            continue;
+        adj[{t.start.x, t.start.y}].push_back({t.end.x, t.end.y});
+        adj[{t.end.x, t.end.y}].push_back({t.start.x, t.start.y});
+    }
+    std::set<std::pair<int64_t, int64_t>> seen{{from.x, from.y}};
+    std::vector<std::pair<int64_t, int64_t>> todo{{from.x, from.y}};
+    while (!todo.empty()) {
+        const auto at = todo.back();
+        todo.pop_back();
+        for (const auto& q : adj[at])
+            if (seen.insert(q).second)
+                todo.push_back(q);
+    }
+    return seen.count({to.x, to.y}) > 0;
+}
+
+// The proposal's own check behind the engine's (PR #11 r2 R2-M1): with an end, each member joins its start anchor to
+// its end anchor, and no member's copper is laid twice. Else unroutable: the engine's state is not a pair route.
+void check_laid(const Proposal& pr, const Ends& start, const std::optional<Ends>& end, const Member& p, const Member& n)
+{
+    for (size_t i = 0; i < pr.add_tracks.size(); i++)
+        for (size_t j = i + 1; j < pr.add_tracks.size(); j++)
+            if ((pr.add_tracks[i].net == p.name || pr.add_tracks[i].net == n.name) && laid_twice(pr.add_tracks[i], pr.add_tracks[j]))
+                throw RequestError("unroutable", "PNS laid part of the pair twice; the pair is not routed");
+    if (end && (!joined(pr, p.name, start.ap, end->ap) || !joined(pr, n.name, start.an, end->an)))
+        throw RequestError("unroutable", "PNS did not join each member from its start to its end; the pair is not routed");
 }
 
 } // namespace
@@ -248,9 +335,10 @@ Proposal run_route_pair(const Board& b, const PairRequest& rq)
     for (size_t i = 0; i < rq.waypoints.size(); i++)
         pair_waypoint(s, b, rq, i, layer);
     if (end)
-        pair_finish(s, *end, rq.mode);
+        pair_finish(s, *end, p.net, rq.mode);
     s.router.CommitRouting();
     Proposal pr = make_proposal(s.iface, b);
+    check_laid(pr, start, end, p, n);
     check_same_net_holes(b, pr);
     return pr;
 }

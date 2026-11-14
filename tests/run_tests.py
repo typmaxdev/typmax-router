@@ -1017,6 +1017,31 @@ def t_route_pair_waypoints(binary):
         clean(board("pair"), pr, "dangling, two collinear waypoints")
 
 
+OFF_AXIS = [("pair", [[9 * MM, 9_100_000]]), ("pair", [[7 * MM, 10_250_000], [11 * MM, 13_250_000]]),
+            ("pair_shove", [[13 * MM, 12_700_000]])]
+
+
+def t_route_pair_off_axis(binary):
+    """A waypoint off the pads' line, then an end (review PR #11 r2 R2-M1): the engine cannot carry the pair on from
+    a leg fixed on a diagonal, and its placer answers true for a leg it never lays. Each such request is unroutable,
+    in walkaround and in shove, never ok without the end leg; on the line the same request routes, joined and clean."""
+    with RouterClient(binary) as c:
+        for name, wps in OFF_AXIS:
+            b = board(name)
+            c.call("load_board", {"board": b})
+            for mode in ("walkaround", "shove"):
+                err = expect_error(c, "route_pair", pair_legs(wps, mode=mode), "unroutable")
+                check("end pair" in err["message"], f"{name} {mode} {wps}: {err}")
+        # the same shapes on the pads' line: routed, both members pad to pad, clean (t_route_pair_waypoints' check)
+        b = board("pair")
+        c.call("load_board", {"board": b})
+        for mode in ("walkaround", "shove"):
+            pr = c.call("route_pair", pair_legs([[9 * MM, 10_250_000], [11 * MM, 10_250_000]], mode=mode))["proposal"]
+            clean(b, pr, f"on the pads' line, {mode}")
+            check(connected(pr, "DP", pad_pos(b, "U1.1"), pad_pos(b, "U2.1")), f"{mode}: DP not joined")
+            check(connected(pr, "DN", pad_pos(b, "U1.2"), pad_pos(b, "U2.2")), f"{mode}: DN not joined")
+
+
 def t_route_pair_errors(binary):
     """Every refusal of route_pair, each with its code."""
     with RouterClient(binary) as c:
@@ -1231,7 +1256,7 @@ SYNTHETIC = [t_checker_self_test, t_protocol_errors, t_base_revision_required, t
              t_one_layer_via, t_via_at_trace_end, t_integers_only, t_utf8, t_duplicate_keys_linear, t_parse_is_time_limited,
              t_max_line_is_bounded, t_argv_strict, t_internal_crash, t_engine_identity, t_error_detail, t_converter, t_fixture_zone_filter, t_spdx_headers, t_no_local_paths, t_patch_notices, t_timeout,
              t_ping_methods, t_route_pair, t_route_pair_shove, t_route_pair_vias, t_route_pair_dangling,
-             t_route_pair_waypoints, t_route_pair_errors, t_tune_length, t_tune_keeps_untouched, t_tune_shape, t_tune_pair, t_tune_errors]
+             t_route_pair_waypoints, t_route_pair_off_axis, t_route_pair_errors, t_tune_length, t_tune_keeps_untouched, t_tune_shape, t_tune_pair, t_tune_errors]
 
 
 # ---- determinism ---------------------------------------------------------------
@@ -1282,10 +1307,13 @@ def determinism_requests():
         # PR #11 r1 M-1: a waypoint, then more routing, in walkaround and in shove
         ("pair_legs", [("route_pair", pair_legs([[8 * MM, 10_250_000]]))]),
         ("pair_legs_shove", [("route_pair", pair_legs([[8 * MM, 10_250_000], [14 * MM, 10_250_000]], mode="shove"))]),
+        # PR #11 r2 R2-M1: off the pads' line, one and two waypoints, walkaround and shove: unroutable
+        ("pair_off_axis", [("route_pair", pair_legs(OFF_AXIS[0][1])), ("route_pair", pair_legs(OFF_AXIS[0][1], mode="shove")),
+                           ("route_pair", pair_legs(OFF_AXIS[1][1])), ("route_pair", pair_legs(OFF_AXIS[1][1], mode="shove"))]),
     ]
 
 
-BOARD_OF = {"shove_drag": "shove", "arc_shove": "arc", "pair_vias": "pair_shove", "pair_legs": "pair",
+BOARD_OF = {"shove_drag": "shove", "arc_shove": "arc", "pair_vias": "pair_shove", "pair_legs": "pair", "pair_off_axis": "pair",
             "pair_legs_shove": "pair_shove"}
 
 
