@@ -7,9 +7,10 @@
 #include "world.hpp"
 
 #include <algorithm>
-#include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <map>
+#include <stdexcept>
 #include <tuple>
 
 namespace tr {
@@ -36,6 +37,15 @@ void check_layer(int l, int n)
 }
 namespace {
 
+// Record an item the engine adds. It adds an item once and removes it before it adds that pointer again (PR #11 r2
+// R2-n2); a second add would drop the first record silently, so it is an internal_error, not an assert: NDEBUG is
+// PUBLIC on pns (CMakeLists.txt), so an assert here was compiled out in every build type (PR #11 r3 R3-m1).
+template <class T>
+void add_once(std::map<const PNS::ITEM*, T>& added, const PNS::ITEM* item, const T& v)
+{
+    if (!added.emplace(item, v).second)
+        throw std::logic_error("the engine added one item twice without removing it");
+}
 
 // KiCad's rotation convention (PROTOCOL.md): y points down, positive angles
 // turn counter-clockwise on screen: x' = x cos + y sin, y' = -x sin + y cos.
@@ -373,9 +383,7 @@ void IFACE::capture_add(PNS::ITEM* aItem)
         t.start = pt(s->Seg().A);
         t.end = pt(s->Seg().B);
         t.width = s->Width();
-        // the engine adds an item once and removes it before it adds that pointer again (PR #11 r2 R2-n2)
-        assert(m_added_tracks.count(aItem) == 0);
-        m_added_tracks[aItem] = t;
+        add_once(m_added_tracks, aItem, t);
         break;
     }
     case PNS::ITEM::ARC_T: {
@@ -390,9 +398,7 @@ void IFACE::capture_add(PNS::ITEM* aItem)
         t.end = pt(sa.GetP1());
         t.has_mid = true;
         t.width = a->Width();
-        // the engine adds an item once and removes it before it adds that pointer again (PR #11 r2 R2-n2)
-        assert(m_added_tracks.count(aItem) == 0);
-        m_added_tracks[aItem] = t;
+        add_once(m_added_tracks, aItem, t);
         break;
     }
     case PNS::ITEM::VIA_T: {
@@ -408,9 +414,7 @@ void IFACE::capture_add(PNS::ITEM* aItem)
             std::swap(v.layer_from, v.layer_to);
         check_layer(v.layer_from, n);
         check_layer(v.layer_to, n);
-        // the engine adds an item once and removes it before it adds that pointer again (PR #11 r2 R2-n2)
-        assert(m_added_vias.count(aItem) == 0);
-        m_added_vias[aItem] = v;
+        add_once(m_added_vias, aItem, v);
         break;
     }
     default: break; // solids are never added by routing or dragging

@@ -291,12 +291,13 @@ both members (P against N is two nets: the larger clearance), and the service's
 - Where the pair is coupled its members run at `gap`. Around an obstacle the
   engine walks each member on its own: a pair may split, one member each side
   of an obstacle, rather than go round it together (`tests/boards/pair.json`).
-- **Waypoints off the pads' line: unroutable before an `end`.** KiCad's pair placer cannot carry a pair on from a
-  leg it fixed on a diagonal: its gateways do not fit and it keeps its old head. A waypoint whose leg ends on a
-  diagonal (on the test boards: every waypoint off the straight line between the start and end pads, about a
-  thousand measured, walkaround and shove) therefore answers `unroutable` once an `end` (or a later waypoint) follows.
-  A pair with such a waypoint and no `end` is routed to it (dangling). Feeding the cursor toward the end in steps, and
-  starting the placer afresh from the fixed copper's free ends, were measured not to help.
+- **One bend per leg after a waypoint.** Each leg the pair placer lays after a fixed waypoint is an entry at the
+  fixed point, at most one 45° bend, and the entry onto the next waypoint or the end. A route that needs a further
+  bend in one leg needs a waypoint at that bend, as in KiCad's own router; without one the answer is `unroutable`
+  once an `end` (or a later waypoint) follows. For example, a single waypoint off the pads' line followed by an end
+  back on it needs two bends in its last leg, so it is `unroutable`. With a second waypoint where the pair turns back
+  (off the line, along it, back, then the end), it routes. A pair with no `end` is routed to its last waypoint
+  (dangling). The pair can bend at a fixed point on either diagonal because of patches/0005 (SOURCE.md).
 - **The proposal holds the final copper only.** The pair placer commits each fixed leg into the engine's world at
   once, and a later leg may merge, re-optimise or shove it again; the service drops such a leg from the proposal, so
   each member's copper is laid once.

@@ -14,7 +14,7 @@ Horizon EDA's copy of PNS; it was replaced by KiCad 10.0.7.
 - **Commit:** `69cafb907ebc09e7722a2a464b1d466fc2e3608d` (2026-10-06)
 - **Repository:** https://gitlab.com/kicad/code/kicad.git
 - **Files:** 160 (tools/kicad_closure.txt), each with its sha256 and licence in `vendor/kicad.manifest`
-- **Patches:** 4 (patches/series)
+- **Patches:** 5 (patches/series)
 <!-- END update_kicad.sh -->
 
 `vendor/kicad/` holds those files **byte for byte**, at their upstream paths:
@@ -52,7 +52,7 @@ includes but uses nothing from is an empty stand-in that says so.
 | `length_delay_calculation/*.h` | length/delay tuning | the pad/via clipping helpers tuning calls; `tune` counts track length only (PROTOCOL.md), so they leave a line unchanged |
 | `shim/time_limit.cpp` | `pcbnew/router/time_limit.cpp` | `std::chrono::steady_clock` instead of wxWidgets' clock; `INT_MAX` ms means "no limit"; the test hook `TYPMAX_ROUTER_TEST_CLOCK=expired` |
 
-### Patches (`patches/`, 4 files, 321 lines; 108 lines added and 12 removed in upstream code, comments and the notices included)
+### Patches (`patches/`, 5 files, 379 lines; 120 lines added and 15 removed in upstream code, comments and the notices included)
 
 | Patch | Upstream file | Why | Upstream? |
 |---|---|---|---|
@@ -60,6 +60,7 @@ includes but uses nothing from is an empty stand-in that says so.
 | `0002-archull-margin-covers-polyline-error` | `pns_utils.cpp` | `ArcHull`'s margin (5 µm) did not cover its polyline's error (half of 20 µm on either side of the arc): a walkaround past an arc never settled; the margin is now 10 µm + 1 µm | yes |
 | `0003-obstacle-order-by-item-serial` | `pns_item.h`, `pns_node.h` | `NODE::OBSTACLES` was ordered by address, so a route could differ by 1 nm between processes (ASLR); items now carry a creation serial (a copy gets a new one, an assignment keeps the target's) and obstacles are ordered by it | yes |
 | `0004-virtual-vias-in-a-stable-order` | `pns_joint.h`, `pns_node.cpp` | `FixupVirtualVias` created its virtual vias in the order of a hash table keyed on a net POINTER (and laid out differently by each standard library), and 0003 makes creation order the obstacle order; they are now sorted by position, layer and diameter, and the hash no longer reads the pointer | yes |
+| `0005-dp-continuation-gateways` | `pns_diff_pair.cpp` | after a pair was fixed at a waypoint, `buildDpContinuation`'s angled gateways led the outer member by the pitch times sin(22.5°) where a 45° turn needs tan(22.5°), so every one failed the gap check, and they were added on only one of the two diagonals: the pair could not bend at a fixed point (PR #11 r3 R3-M2); they now lead by tan(22.5°) and cover both diagonals | yes (KiCad #12459) |
 
 Each patch file's header says the same at more length. Each patch also adds a notice
 to the top of every file it modifies ("Modified by the typmax-router authors, <date>:

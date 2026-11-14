@@ -9,11 +9,13 @@
 # patch still applies to a new release (it stops on the first one that does
 # not, named). patches/README.md says what a patch file's header must say.
 #
-# At KiCad 10.0.7: three upstream-bug fixes (arcs as shove obstacles, the
-# arc hull's margin, an obstacle order that depended on addresses); every
+# At KiCad 10.0.7: five upstream-bug fixes (arcs as shove obstacles, the
+# arc hull's margin, two orders that depended on addresses, a differential
+# pair's continuation gateways after a waypoint); every
 # other difference from KiCad's own build is a stand-in under shim/
 # (SOURCE.md, "What is not KiCad's").
 0001-shove-search-arc-obstacles.patch
 0002-archull-margin-covers-polyline-error.patch
 0003-obstacle-order-by-item-serial.patch
 0004-virtual-vias-in-a-stable-order.patch
+0005-dp-continuation-gateways.patch

@@ -1042,6 +1042,72 @@ def t_route_pair_off_axis(binary):
             check(connected(pr, "DN", pad_pos(b, "U1.2"), pad_pos(b, "U2.2")), f"{mode}: DN not joined")
 
 
+def final_copper(b, pr):
+    """The proposal's copper once applied: its added tracks and the board's tracks it keeps."""
+    gone = set(pr["remove"])
+    return {"add": pr["add"] + [dict(t, kind="track") for t in b["tracks"] if t["id"] not in gone]}
+
+
+def stubs(b, xs):
+    """`b` with in-line DP/DN stubs from x0 to x1 mm on the pads' lines (y 10 and 10.5 mm), one per (x0, x1)."""
+    tracks = []
+    for k, (x0, x1) in enumerate(xs):
+        for net, y in (("DP", 10 * MM), ("DN", 10_500_000)):
+            tracks.append({"id": f"stub-{net.lower()}{k}", "net": net, "layer": "F.Cu", "start": [x0 * MM, y],
+                           "end": [x1 * MM, y], "width": 250_000})
+    return dict(b, tracks=b["tracks"] + tracks)
+
+
+def t_route_pair_from_stubs(binary):
+    """A pair started from, or landed on, in-line track ends (review PR #11 r3 R3-M1): KiCad merges the old track into
+    the new segment, which then runs through the anchor, so the service's own check walks the final copper (added
+    plus kept) and matches an anchor anywhere along a track. Each request is ok, clean, and joined pad to pad over the
+    final copper, in walkaround and in shove, with and without a waypoint."""
+    start = dict(PAIR, start={"p": {"point": [8 * MM, 10 * MM]}, "n": {"point": [8 * MM, 10_500_000]}})
+    end = dict(PAIR, end={"p": {"point": [22 * MM, 10 * MM]}, "n": {"point": [22 * MM, 10_500_000]}})
+    cases = [(stubs(board("pair"), [(5, 8)]), start), (stubs(board("pair"), [(5, 8)]), dict(start, waypoints=[{"point": [12 * MM, 10_250_000]}])),
+             (stubs(board("pair"), [(22, 25)]), end)]
+    with RouterClient(binary) as c:
+        for b, req in cases:
+            c.call("load_board", {"board": b})
+            for mode in ("walkaround", "shove"):
+                what = f"{mode} {req['start']} → {req['end']}"
+                pr = c.call("route_pair", dict(req, mode=mode))["proposal"]
+                clean(b, pr, what)
+                whole = final_copper(b, pr)
+                check(connected(whole, "DP", pad_pos(b, "U1.1"), pad_pos(b, "U2.1")), f"{what}: DP not joined")
+                check(connected(whole, "DN", pad_pos(b, "U1.2"), pad_pos(b, "U2.2")), f"{what}: DN not joined")
+
+
+def open_pair():
+    """The `pair` board without its middle obstacles (U3 and U4): room for a pair to leave the pads' line and come
+    back (review PR #11 r3 R3-M2)."""
+    b = board("pair")
+    return dict(b, pads=[p for p in b["pads"] if not p["id"].startswith(("U3", "U4"))])
+
+
+# off the pads' line, along, back onto it, then the end: one bend per leg (PROTOCOL.md, route_pair)
+DETOURS = [[[9 * MM, 9_100_000], [12 * MM, 9_100_000], [14 * MM, 10_250_000]],
+           [[9 * MM, 11_400_000], [12 * MM, 11_400_000], [14 * MM, 10_250_000]]]
+
+
+def t_route_pair_detour(binary):
+    """A detour off the pads' line and back, a waypoint at each bend (review PR #11 r3 R3-M2): KiCad's continuation
+    gateways after a fixed waypoint led by sin(22.5°) of the pitch where a 45° turn needs tan(22.5°), and covered one
+    diagonal only, so the pair could not bend at a fixed point (patches/0005). Above and below the line, in walkaround
+    and in shove: ok, clean, both members joined pad to pad."""
+    b = open_pair()
+    with RouterClient(binary) as c:
+        c.call("load_board", {"board": b})
+        for wps in DETOURS:
+            for mode in ("walkaround", "shove"):
+                what = f"{mode} {wps}"
+                pr = c.call("route_pair", pair_legs(wps, mode=mode))["proposal"]
+                clean(b, pr, what)
+                check(connected(pr, "DP", pad_pos(b, "U1.1"), pad_pos(b, "U2.1")), f"{what}: DP not joined")
+                check(connected(pr, "DN", pad_pos(b, "U1.2"), pad_pos(b, "U2.2")), f"{what}: DN not joined")
+
+
 def t_route_pair_errors(binary):
     """Every refusal of route_pair, each with its code."""
     with RouterClient(binary) as c:
@@ -1256,7 +1322,7 @@ SYNTHETIC = [t_checker_self_test, t_protocol_errors, t_base_revision_required, t
              t_one_layer_via, t_via_at_trace_end, t_integers_only, t_utf8, t_duplicate_keys_linear, t_parse_is_time_limited,
              t_max_line_is_bounded, t_argv_strict, t_internal_crash, t_engine_identity, t_error_detail, t_converter, t_fixture_zone_filter, t_spdx_headers, t_no_local_paths, t_patch_notices, t_timeout,
              t_ping_methods, t_route_pair, t_route_pair_shove, t_route_pair_vias, t_route_pair_dangling,
-             t_route_pair_waypoints, t_route_pair_off_axis, t_route_pair_errors, t_tune_length, t_tune_keeps_untouched, t_tune_shape, t_tune_pair, t_tune_errors]
+             t_route_pair_waypoints, t_route_pair_off_axis, t_route_pair_from_stubs, t_route_pair_detour, t_route_pair_errors, t_tune_length, t_tune_keeps_untouched, t_tune_shape, t_tune_pair, t_tune_errors]
 
 
 # ---- determinism ---------------------------------------------------------------
@@ -1310,16 +1376,20 @@ def determinism_requests():
         # PR #11 r2 R2-M1: off the pads' line, one and two waypoints, walkaround and shove: unroutable
         ("pair_off_axis", [("route_pair", pair_legs(OFF_AXIS[0][1])), ("route_pair", pair_legs(OFF_AXIS[0][1], mode="shove")),
                            ("route_pair", pair_legs(OFF_AXIS[1][1])), ("route_pair", pair_legs(OFF_AXIS[1][1], mode="shove"))]),
+        # PR #11 r3 R3-M2: a detour off the line and back, a waypoint at each bend (patches/0005): routed
+        ("pair_detour", [("route_pair", pair_legs(DETOURS[0])), ("route_pair", pair_legs(DETOURS[1], mode="shove"))]),
     ]
 
 
+# cases whose board is made from a committed one in code
+MADE = {"pair_detour": open_pair}
 BOARD_OF = {"shove_drag": "shove", "arc_shove": "arc", "pair_vias": "pair_shove", "pair_legs": "pair", "pair_off_axis": "pair",
             "pair_legs_shove": "pair_shove"}
 
 
 def run_steps(c, name, steps):
     """Load the case's board and run its steps; the raw response lines."""
-    c.call("load_board", {"board": board(BOARD_OF.get(name, name))})
+    c.call("load_board", {"board": MADE[name]() if name in MADE else board(BOARD_OF.get(name, name))})
     lines, last = [], None
     for method, params in steps:
         c.next_id = 100  # the same id everywhere, so whole lines compare

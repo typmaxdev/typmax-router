@@ -1,0 +1,57 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileCopyrightText: 2026 The typmax-router authors
+Subject: a pair's continuation gateways lead by tan(22.5) and cover both diagonals
+Upstream-file: pcbnew/router/pns_diff_pair.cpp (DP_GATEWAYS::buildDpContinuation)
+Why: after a differential pair is fixed at a waypoint, its next leg starts from
+ buildDpContinuation's gateways: the anchor pair, and four "angled" ones that
+ extend one member along its direction so the pair can turn 45 degrees at the
+ fixed point. The extension was the pitch times sin(22.5) (0.383), or sin(23.5)
+ as wiggle room (KiCad #12459's fixme); a 45-degree turn needs the outer member
+ to lead by the pitch times tan(22.5) (0.414). With sin the turned members end
+ 0.978 of the pitch apart, so every angled gateway failed the gap check. And
+ the angled gateways were added only when delta.x == delta.y, one of the two
+ diagonals: a pair fixed on the other got none. So after any diagonal fix the
+ pair could not bend at the fixed point (review PR #11 r3 R3-M2: over a sweep of
+ two-waypoint detours off the pads' line, none routed before this patch and 155
+ routed joined and clean with it).
+ Measured with the test suite: every earlier golden line byte-identical.
+Upstream: yes, as the fix for KiCad #12459; not yet proposed.
+
+--- a/pcbnew/router/pns_diff_pair.cpp
++++ b/pcbnew/router/pns_diff_pair.cpp
+@@ -5,6 +5,10 @@
+  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+  *
++ * Modified by the typmax-router authors, 2026-11-15: buildDpContinuation's angled gateways
++ *   lead by tan(22.5) of the pitch, and are added on both 45-degree diagonals
++ *   (patches/0005-dp-continuation-gateways.patch in the typmax-router repository).
++ *
+  * This program is free software: you can redistribute it and/or modify it
+  * under the terms of the GNU General Public License as published by the
+  * Free Software Foundation, either version 3 of the License, or (at your
+@@ -645,8 +649,11 @@
+     // the existing direction.
+ 
+     int    EPSILON  = 5;         // 0.005um
+-    double SIN_22_5 = 0.38268;   // sin(22.5)
+-    double SIN_23_5 = 0.39875;   // sin(23.5)
++    // The outer member of a pair turning 45 degrees leads the inner by the pitch times
++    // tan(22.5), not sin(22.5): with sin the turned members end 0.978 of the pitch apart
++    // and every angled gateway fails the gap check (the names are kept to keep the diff small).
++    double SIN_22_5 = 0.41421;   // tan(22.5)
++    double SIN_23_5 = 0.42500;   // a little above tan(22.5): wiggle room
+ 
+     auto addAngledGateways =
+             [&]( int length, int priority )
+@@ -670,7 +677,9 @@
+ 
+     VECTOR2I delta = aPair.AnchorP() - aPair.AnchorN();
+ 
+-    if( abs( delta.x ) < EPSILON || abs( delta.y ) < EPSILON || abs( delta.x - delta.y ) < EPSILON )
++    // Either 45-degree diagonal: delta.x == delta.y caught only one of the two.
++    if( abs( delta.x ) < EPSILON || abs( delta.y ) < EPSILON
++        || abs( abs( delta.x ) - abs( delta.y ) ) < EPSILON )
+     {
+         addAngledGateways( KiROUND( (double) m_gap * SIN_22_5 ), 20 );
+ 

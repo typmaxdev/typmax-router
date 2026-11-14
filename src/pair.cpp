@@ -244,11 +244,10 @@ bool reached(PNS::ROUTER& r, const Ends& e, PNS::NET_HANDLE p)
     return h && h->first == e.ap && h->second == e.an;
 }
 
-// The last leg onto the end pair. After a waypoint fixed on a diagonal the placer's gateways do not fit, and it
-// answers true for a leg it did not lay: it keeps its old head and re-adds it (PR #11 r2 R2-M1). So the heads must end
-// on the end pair's anchors, as `route` checks its trace's end; short of them the answer is unroutable, never a
-// proposal without the leg. (Tried and measured not to help: the cursor fed toward the end in steps, and a placer
-// started afresh from the free ends of the copper fixed so far.)
+// The last leg onto the end pair. A leg bends at most once after a fixed waypoint (PROTOCOL.md, `route_pair`); when
+// the end needs more, the placer answers true for a leg it did not lay: it keeps its old head and re-adds it (PR #11
+// r2 R2-M1). So the heads must end on the end pair's anchors, as `route` checks its trace's end; short of them the
+// answer is unroutable, never a proposal without the leg.
 void pair_finish(Session& s, const Ends& e, PNS::NET_HANDLE p, Mode m)
 {
     const std::string mode = m == Mode::Shove ? "shove" : "walkaround";
@@ -276,37 +275,74 @@ bool laid_twice(const Track& a, const Track& b)
     return std::min(len, hi) - std::max(0.0, lo) > 2;
 }
 
-// Whether `net`'s added tracks join `from` to `to` (a walk over shared ends; a via joins its layers at its centre).
-bool joined(const Proposal& pr, const std::string& net, const VECTOR2I& from, const VECTOR2I& to)
+// Whether `q` lies on track `t`: within 1 nm of a straight track's segment, or at an arc's end.
+bool on_track(const Track& t, const VECTOR2I& q)
 {
-    std::map<std::pair<int64_t, int64_t>, std::vector<std::pair<int64_t, int64_t>>> adj;
-    for (const Track& t : pr.add_tracks) {
-        if (t.net != net)
-            continue;
-        adj[{t.start.x, t.start.y}].push_back({t.end.x, t.end.y});
-        adj[{t.end.x, t.end.y}].push_back({t.start.x, t.start.y});
+    const auto at = [&](const Pt& e) { return e.x == q.x && e.y == q.y; };
+    if (at(t.start) || at(t.end))
+        return true;
+    if (t.has_mid)
+        return false;
+    const double dx = static_cast<double>(t.end.x - t.start.x), dy = static_cast<double>(t.end.y - t.start.y);
+    const double len2 = dx * dx + dy * dy;
+    if (len2 == 0)
+        return false;
+    const double u = std::clamp(((q.x - t.start.x) * dx + (q.y - t.start.y) * dy) / len2, 0.0, 1.0);
+    return std::hypot(t.start.x + u * dx - q.x, t.start.y + u * dy - q.y) <= 1.0;
+}
+
+// `net`'s copper once the proposal applies: its added tracks and the board's tracks it keeps.
+std::vector<const Track*> final_tracks(const Board& b, const Proposal& pr, const std::string& net)
+{
+    const std::set<std::string> gone(pr.remove.begin(), pr.remove.end());
+    std::vector<const Track*> out;
+    for (const Track& t : pr.add_tracks)
+        if (t.net == net)
+            out.push_back(&t);
+    for (const Track& t : b.tracks)
+        if (t.net == net && gone.count(t.id) == 0)
+            out.push_back(&t);
+    return out;
+}
+
+// Whether `net`'s final copper joins `from` to `to` (PR #11 r3 R3-M1): a walk over tracks that share an end (a via
+// joins its layers at its centre), from every track `from` lies on to any track `to` lies on. An anchor is matched
+// anywhere along a track, since KiCad merges an in-line track the pair starts or ends on into the new segment.
+bool joined(const Board& b, const Proposal& pr, const std::string& net, const VECTOR2I& from, const VECTOR2I& to)
+{
+    const std::vector<const Track*> ts = final_tracks(b, pr, net);
+    std::map<std::pair<int64_t, int64_t>, std::vector<size_t>> at_end;
+    for (size_t i = 0; i < ts.size(); i++) {
+        at_end[{ts[i]->start.x, ts[i]->start.y}].push_back(i);
+        at_end[{ts[i]->end.x, ts[i]->end.y}].push_back(i);
     }
-    std::set<std::pair<int64_t, int64_t>> seen{{from.x, from.y}};
-    std::vector<std::pair<int64_t, int64_t>> todo{{from.x, from.y}};
+    std::vector<bool> seen(ts.size(), false);
+    std::vector<size_t> todo;
+    for (size_t i = 0; i < ts.size(); i++)
+        if (on_track(*ts[i], from))
+            seen[i] = true, todo.push_back(i);
     while (!todo.empty()) {
-        const auto at = todo.back();
+        const Track& t = *ts[todo.back()];
         todo.pop_back();
-        for (const auto& q : adj[at])
-            if (seen.insert(q).second)
-                todo.push_back(q);
+        if (on_track(t, to))
+            return true;
+        for (const Pt& e : {t.start, t.end})
+            for (size_t j : at_end[{e.x, e.y}])
+                if (!seen[j])
+                    seen[j] = true, todo.push_back(j);
     }
-    return seen.count({to.x, to.y}) > 0;
+    return false;
 }
 
 // The proposal's own check behind the engine's (PR #11 r2 R2-M1): with an end, each member joins its start anchor to
 // its end anchor, and no member's copper is laid twice. Else unroutable: the engine's state is not a pair route.
-void check_laid(const Proposal& pr, const Ends& start, const std::optional<Ends>& end, const Member& p, const Member& n)
+void check_laid(const Board& b, const Proposal& pr, const Ends& start, const std::optional<Ends>& end, const Member& p, const Member& n)
 {
     for (size_t i = 0; i < pr.add_tracks.size(); i++)
         for (size_t j = i + 1; j < pr.add_tracks.size(); j++)
             if ((pr.add_tracks[i].net == p.name || pr.add_tracks[i].net == n.name) && laid_twice(pr.add_tracks[i], pr.add_tracks[j]))
                 throw RequestError("unroutable", "PNS laid part of the pair twice; the pair is not routed");
-    if (end && (!joined(pr, p.name, start.ap, end->ap) || !joined(pr, n.name, start.an, end->an)))
+    if (end && (!joined(b, pr, p.name, start.ap, end->ap) || !joined(b, pr, n.name, start.an, end->an)))
         throw RequestError("unroutable", "PNS did not join each member from its start to its end; the pair is not routed");
 }
 
@@ -338,7 +374,7 @@ Proposal run_route_pair(const Board& b, const PairRequest& rq)
         pair_finish(s, *end, p.net, rq.mode);
     s.router.CommitRouting();
     Proposal pr = make_proposal(s.iface, b);
-    check_laid(pr, start, end, p, n);
+    check_laid(b, pr, start, end, p, n);
     check_same_net_holes(b, pr);
     return pr;
 }
