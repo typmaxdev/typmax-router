@@ -987,10 +987,19 @@ def t_route_pair_errors(binary):
         # a free point of DN farther from U1.1 than U1.2 is: the engine couples U1.2
         expect_error(c, "route_pair", dict(PAIR, start={"p": {"pad": "U1.1"}, "n": {"point": [5 * MM, 11_500_000]}}),
                      "pair_not_coupled")
-        wide = board("pair")
-        wide["rules"] = dict(wide["rules"], net_classes={"DN": "Power"})
-        c.call("load_board", {"board": wide})
-        expect_error(c, "route_pair", PAIR, "pair_class_mismatch")
+        base = board("pair")["rules"]["classes"]["Default"]
+        for differs in ({"track_width": 300_000}, {"via_diameter": 700_000}, {"via_drill": 350_000}):
+            wide = board("pair")
+            classes = dict(wide["rules"]["classes"], Other=dict(base, **differs))
+            wide["rules"] = dict(wide["rules"], classes=classes, net_classes={"DN": "Other"})
+            c.call("load_board", {"board": wide})
+            expect_error(c, "route_pair", PAIR, "pair_class_mismatch")
+        same = board("pair")
+        same["rules"] = dict(same["rules"], classes=dict(same["rules"]["classes"], Other=dict(base, clearance=210_000)),
+                             net_classes={"DN": "Other"})
+        c.call("load_board", {"board": same})
+        c.call("route_pair", dict(PAIR, gap=210_000))  # one size, two clearances: the larger one holds
+        expect_error(c, "route_pair", dict(PAIR, gap=205_000), "gap_too_small")
         boxed = board("pair")
         boxed["tracks"] = [{"id": f"ring-{k}", "net": "B", "layer": "F.Cu", "start": a, "end": z, "width": 250_000}
                            for k, (a, z) in enumerate([([3 * MM, 8 * MM], [7 * MM, 8 * MM]), ([7 * MM, 8 * MM], [7 * MM, 13 * MM]),
@@ -1023,6 +1032,15 @@ def t_tune_length(binary):
         short = c.call("tune", dict(TUNE, target=10 * MM))
         check(short["status"] == "too_long" and short["length"] == 20 * MM, f"too_long: {short}")
         check(short["proposal"] == {"remove": [], "add": []}, f"too_long proposes: {short['proposal']}")
+        # two collinear tracks: the engine would give them back merged into one
+        split = board("tune")
+        split["tracks"] = [dict(split["tracks"][0], end=[15 * MM, 10 * MM]),
+                           dict(split["tracks"][0], id="trk-a2", start=[15 * MM, 10 * MM])]
+        c.call("load_board", {"board": split})
+        short = c.call("tune", dict(TUNE, target=10 * MM, to=[14 * MM, 10 * MM]))
+        check(short["status"] == "too_long" and short["proposal"] == {"remove": [], "add": []},
+              f"too_long on two tracks proposes: {short['proposal']}")
+        c.call("load_board", {"board": b})
         line = c.request("tune", TUNE, raw_response=True)
         check(json.loads(line)["result"] == res, "the same tune twice differs")
         c.call("apply", {"proposal": res["proposal"], "base_revision": 0})
