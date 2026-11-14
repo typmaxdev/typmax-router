@@ -291,7 +291,9 @@ bool on_track(const Track& t, const VECTOR2I& q)
     return std::hypot(t.start.x + u * dx - q.x, t.start.y + u * dy - q.y) <= 1.0;
 }
 
-// `net`'s copper once the proposal applies: its added tracks and the board's tracks it keeps.
+// `net`'s copper once the proposal applies: its added tracks and the board's tracks it keeps. No case found needs the
+// kept tracks (KiCad re-lays a merged stub), but they are the copper that stays, and check_laid refuses an add laid
+// over one, so walking them can no longer pass doubled copper (PR #11 r4 R4-M1).
 std::vector<const Track*> final_tracks(const Board& b, const Proposal& pr, const std::string& net)
 {
     const std::set<std::string> gone(pr.remove.begin(), pr.remove.end());
@@ -342,6 +344,16 @@ void check_laid(const Board& b, const Proposal& pr, const Ends& start, const std
         for (size_t j = i + 1; j < pr.add_tracks.size(); j++)
             if ((pr.add_tracks[i].net == p.name || pr.add_tracks[i].net == n.name) && laid_twice(pr.add_tracks[i], pr.add_tracks[j]))
                 throw RequestError("unroutable", "PNS laid part of the pair twice; the pair is not routed");
+    // and never over a board track it keeps (PR #11 r4 R4-M1): a pair started on a diagonal or slightly skewed stub
+    // can be laid along the stub without removing it, which the kept-track walk in `joined` would otherwise pass
+    const std::set<std::string> gone(pr.remove.begin(), pr.remove.end());
+    for (const Track& a : pr.add_tracks) {
+        if (a.net != p.name && a.net != n.name)
+            continue;
+        for (const Track& k : b.tracks)
+            if (k.net == a.net && gone.count(k.id) == 0 && (laid_twice(a, k) || laid_twice(k, a)))
+                throw RequestError("unroutable", "PNS laid part of the pair over a track it keeps; the pair is not routed");
+    }
     if (end && (!joined(b, pr, p.name, start.ap, end->ap) || !joined(b, pr, n.name, start.an, end->an)))
         throw RequestError("unroutable", "PNS did not join each member from its start to its end; the pair is not routed");
 }

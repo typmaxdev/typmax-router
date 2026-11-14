@@ -1079,6 +1079,31 @@ def t_route_pair_from_stubs(binary):
                 check(connected(whole, "DN", pad_pos(b, "U1.2"), pad_pos(b, "U2.2")), f"{what}: DN not joined")
 
 
+def t_route_pair_kept_copper(binary):
+    """A pair started on a 45° stub, or on an in-line stub 1 nm off level (review PR #11 r4 R4-M1): the engine can lay
+    the new member along the stub without removing it. The answer is never ok with a kept track's copper laid twice:
+    either unroutable, or ok and clean over the final copper, in walkaround and in shove."""
+    d = 353_553
+    diag = dict(board("pair"), tracks=[
+        {"id": "s-dp0", "net": "DP", "layer": "F.Cu", "start": [6 * MM, 12 * MM], "end": [8 * MM, 10 * MM], "width": 250_000},
+        {"id": "s-dn0", "net": "DN", "layer": "F.Cu", "start": [6 * MM + d, 12 * MM + d], "end": [8 * MM + d, 10 * MM + d], "width": 250_000}])
+    skew = dict(board("pair"), tracks=[
+        {"id": "s-dp1", "net": "DP", "layer": "F.Cu", "start": [5 * MM, 10 * MM + 1], "end": [8 * MM, 10 * MM], "width": 250_000},
+        {"id": "s-dn1", "net": "DN", "layer": "F.Cu", "start": [5 * MM, 10_500_001], "end": [8 * MM, 10_500_000], "width": 250_000}])
+    cases = [(diag, {"p": {"point": [8 * MM, 10 * MM]}, "n": {"point": [8 * MM + d, 10 * MM + d]}}),
+             (skew, {"p": {"point": [8 * MM, 10 * MM]}, "n": {"point": [8 * MM, 10_500_000]}})]
+    with RouterClient(binary) as c:
+        for b, start in cases:
+            c.call("load_board", {"board": b})
+            for mode in ("walkaround", "shove"):
+                what = f"{mode} {b['tracks'][0]['id']}"
+                r = c.request("route_pair", dict(PAIR, start=start, mode=mode))
+                if not r["ok"]:
+                    check(r["error"]["code"] == "unroutable", f"{what}: refused as {r['error']['code']}, not unroutable")
+                    continue
+                clean(b, r["result"]["proposal"], what)  # overlaps() pairs every added track with every kept one
+
+
 def open_pair():
     """The `pair` board without its middle obstacles (U3 and U4): room for a pair to leave the pads' line and come
     back (review PR #11 r3 R3-M2)."""
@@ -1322,7 +1347,7 @@ SYNTHETIC = [t_checker_self_test, t_protocol_errors, t_base_revision_required, t
              t_one_layer_via, t_via_at_trace_end, t_integers_only, t_utf8, t_duplicate_keys_linear, t_parse_is_time_limited,
              t_max_line_is_bounded, t_argv_strict, t_internal_crash, t_engine_identity, t_error_detail, t_converter, t_fixture_zone_filter, t_spdx_headers, t_no_local_paths, t_patch_notices, t_timeout,
              t_ping_methods, t_route_pair, t_route_pair_shove, t_route_pair_vias, t_route_pair_dangling,
-             t_route_pair_waypoints, t_route_pair_off_axis, t_route_pair_from_stubs, t_route_pair_detour, t_route_pair_errors, t_tune_length, t_tune_keeps_untouched, t_tune_shape, t_tune_pair, t_tune_errors]
+             t_route_pair_waypoints, t_route_pair_off_axis, t_route_pair_from_stubs, t_route_pair_kept_copper, t_route_pair_detour, t_route_pair_errors, t_tune_length, t_tune_keeps_untouched, t_tune_shape, t_tune_pair, t_tune_errors]
 
 
 # ---- determinism ---------------------------------------------------------------

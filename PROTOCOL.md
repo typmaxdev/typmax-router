@@ -300,7 +300,7 @@ both members (P against N is two nets: the larger clearance), and the service's
   (dangling). The pair can bend at a fixed point on either diagonal because of patches/0005 (SOURCE.md).
 - **The proposal holds the final copper only.** The pair placer commits each fixed leg into the engine's world at
   once, and a later leg may merge, re-optimise or shove it again; the service drops such a leg from the proposal, so
-  each member's copper is laid once.
+  each member's copper is laid once, and never over a board track it keeps (else `unroutable`).
 - Determinism and the golden-line gate are `route`'s.
 
 ## `tune`
@@ -428,7 +428,10 @@ serves the six methods of service 0.3.1).
 - `ping` carries `methods`.
 - Versioning names a new method as an additive change.
 - With an `end`, `route_pair` checks that both members reached their end items and that no member's copper is laid
-  twice; a waypoint off the pads' line followed by an `end` is `unroutable` (PR #11 review round 2).
+  twice, over its own adds or over a board track it keeps; the pair bends once per leg after a waypoint, so a further
+  bend needs its own waypoint, else `unroutable` (PR #11 review rounds 2–4).
+- 0.4.0 carries patches/0005, its only change to KiCad's behaviour: the pair placer's continuation after a fixed
+  waypoint (tan 22.5° and both diagonals). It touches the pair placer alone; route and drag never reach it.
 - No answer to an existing request changed beyond `engine.version` (and `ping`'s
   new key): the golden lines of the earlier requests differ from 0.3.1's only in
   the version string.
