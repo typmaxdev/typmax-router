@@ -99,7 +99,7 @@ if(NOT KICAD_TAG OR NOT KICAD_COMMIT)
 endif()
 message(STATUS "vendored KiCad: ${KICAD_TAG} (${KICAD_COMMIT})")
 
-add_executable(typmax-router src/main.cpp src/json.cpp src/board.cpp src/engine.cpp)
+add_executable(typmax-router src/main.cpp src/json.cpp src/board.cpp src/engine.cpp src/world.cpp)
 target_compile_definitions(typmax-router PRIVATE TYPMAX_KICAD_TAG="${KICAD_TAG}" TYPMAX_KICAD_COMMIT="${KICAD_COMMIT}")
 target_link_libraries(typmax-router PRIVATE pns)
 target_compile_options(typmax-router PRIVATE -Wall -Wextra -Wno-unused-parameter)
