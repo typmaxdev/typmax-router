@@ -333,11 +333,30 @@ void IFACE::SyncWorld(PNS::NODE* aNode)
 void IFACE::capture_remove(PNS::ITEM* aItem)
 {
     const Tag* t = tag(aItem->Parent());
-    if (!t)
-        return; // an item this session created and dropped again
+    if (!t) { // an item this session created and dropped again: it is no longer added
+        m_added_tracks.erase(aItem);
+        m_added_vias.erase(aItem);
+        return;
+    }
     if (t->kind != Kind::TRACK && t->kind != Kind::VIA)
         throw std::runtime_error("router tried to remove a non-copper item: " + t->id);
     removed.insert(t->id);
+}
+
+std::vector<Track> IFACE::added_tracks() const
+{
+    std::vector<Track> out;
+    for (const auto& [item, t] : m_added_tracks)
+        out.push_back(t);
+    return out; // in pointer order: make_proposal sorts
+}
+
+std::vector<Via> IFACE::added_vias() const
+{
+    std::vector<Via> out;
+    for (const auto& [item, v] : m_added_vias)
+        out.push_back(v);
+    return out;
 }
 
 void IFACE::capture_add(PNS::ITEM* aItem)
@@ -353,7 +372,7 @@ void IFACE::capture_add(PNS::ITEM* aItem)
         t.start = pt(s->Seg().A);
         t.end = pt(s->Seg().B);
         t.width = s->Width();
-        added_tracks.push_back(t);
+        m_added_tracks[aItem] = t;
         break;
     }
     case PNS::ITEM::ARC_T: {
@@ -368,7 +387,7 @@ void IFACE::capture_add(PNS::ITEM* aItem)
         t.end = pt(sa.GetP1());
         t.has_mid = true;
         t.width = a->Width();
-        added_tracks.push_back(t);
+        m_added_tracks[aItem] = t;
         break;
     }
     case PNS::ITEM::VIA_T: {
@@ -384,7 +403,7 @@ void IFACE::capture_add(PNS::ITEM* aItem)
             std::swap(v.layer_from, v.layer_to);
         check_layer(v.layer_from, n);
         check_layer(v.layer_to, n);
-        added_vias.push_back(v);
+        m_added_vias[aItem] = v;
         break;
     }
     default: break; // solids are never added by routing or dragging
@@ -429,8 +448,8 @@ Proposal make_proposal(const IFACE& io, const Board& b)
 {
     Proposal p;
     p.remove.assign(io.removed.begin(), io.removed.end()); // std::set: sorted
-    p.add_tracks = io.added_tracks;
-    p.add_vias = io.added_vias;
+    p.add_tracks = io.added_tracks();
+    p.add_vias = io.added_vias();
     std::sort(p.add_tracks.begin(), p.add_tracks.end(), track_less);
     std::sort(p.add_vias.begin(), p.add_vias.end(), via_less);
     std::set<std::string> taken;

@@ -270,9 +270,9 @@ members' copper. It never changes the loaded board; `apply` does.
 | `layer` | yes | the layer the pair starts on |
 | `start` | yes | `{"p": end, "n": end}`, each end of `route`'s shape: `{"pad": id}` (on that member's net, else `pair_mismatch`; on `layer`, else `layer_mismatch`) or `{"point": [x, y]}` (the member's copper there, on `layer`, which the pair starts from as the engine does: from its free end; else a point of the member's net). The engine couples `start.p` with the **nearest item of net `n` of the same kind** (pad with pad, via with via, track with track; a free point counts as a pad): `start.n` must be that item, else `pair_not_coupled` |
 | `end` | no | the same shape; the pair lands on both ends, on the layer the last via waypoint names (else `layer`), and the same coupling rule holds. Omitted = the pair ends at its last waypoint (dangling) |
-| `waypoints` | no | as `route`'s: up to 1000 `{"point": [x, y], "via": bool, "layer": name}`, each a click that fixes the pair so far; `point` is where the pair's **centreline** goes. `via: true` places twin through vias, one per member, `via_gap` apart, and continues on `layer`. A waypoint equal to the one before it is `invalid_params` |
+| `waypoints` | no | as `route`'s: up to 1000 `{"point": [x, y], "via": bool, "layer": name}`, each a click that fixes the pair so far; `point` is where the pair's **centreline** goes. The pair must reach it: a centreline that ends farther than half the pair's pitch ((`gap` + width) / 2) from the point is `unroutable`, as `route` refuses a waypoint its trace does not end on. `via: true` places twin through vias, one per member, `via_gap` apart, and continues on `layer`. A waypoint equal to the one before it is `invalid_params` |
 | `gap` | yes | the members' gap, edge to edge, nm. Under the larger of the two classes' `clearance` is `gap_too_small` (equal to it is admitted) |
-| `via_gap` | no | the twin vias' copper, edge to edge, nm. Default, and least: what the rules admit, `max(clearance, hole_to_hole − 2a, hole_clearance − a)` with `a = (via_diameter − via_drill) / 2` (integer nm) and `clearance` the larger class's; under it is `gap_too_small` |
+| `via_gap` | no | the twin vias' copper, edge to edge, nm, 1..1e8. Default, and least: what the rules admit, `max(clearance, hole_to_hole − 2a, hole_clearance − a)` with `a = (via_diameter − via_drill) / 2` (integer nm) and `clearance` the larger class's; under it is `gap_too_small` |
 | `mode` | no | `walkaround` (default) or `shove` (other nets' tracks and vias pushed aside, in the proposal's `remove`/`add`); `mark_obstacles` is `invalid_params` |
 | `via_allowed` | no | default false; a `via` waypoint without it is `via_not_allowed` |
 
@@ -291,6 +291,9 @@ both members (P against N is two nets: the larger clearance), and the service's
 - Where the pair is coupled its members run at `gap`. Around an obstacle the
   engine walks each member on its own: a pair may split, one member each side
   of an obstacle, rather than go round it together (`tests/boards/pair.json`).
+- **The proposal holds the final copper only.** The pair placer commits each fixed leg into the engine's world at
+  once, and a later leg may merge, re-optimise or shove it again; the service drops such a leg from the proposal, so
+  each member's copper is laid once.
 - Determinism and the golden-line gate are `route`'s.
 
 ## `tune`
@@ -305,7 +308,7 @@ placers and returns a proposal plus the length the engine counts.
 | `p`, `n` | for `pair_length`, `skew` | the pair's nets, different; with `net` it is `invalid_params`. A net no item carries is `unknown_net` |
 | `target` | yes | integer nm. `length`, `pair_length`: the length wanted, 1..1e10. `skew`: the tuned member's length less its partner's, −1e9..1e9 |
 | `tolerance` | yes | integer nm, 0..1e9: the window is `target ± tolerance` (for `skew`, `abs(target) + tolerance` ≤ 1e9) |
-| `track` | yes | the id of the track the span is on (else `unknown_item`): on `net` (else `net_mismatch`), or on `p` or `n` (else `pair_mismatch`); a `locked` track is `locked`. For `skew` the member tuned is this track's net |
+| `track` | yes | the id of the track the span is on (else `unknown_item`): on `net` (else `net_mismatch`), or on `p` or `n` (else `pair_mismatch`); a `locked` track is `locked`. For `skew` the member tuned is this track's net. The engine never changes locked copper: a tune whose answer would remove a locked track or via (a `pair_length` tune's partner line, or another track of the tuned line) is `locked`, and nothing is proposed |
 | `from`, `to` | yes | two different points on this track's copper (within its width, else `invalid_params`). The engine snaps `from` onto the track's centreline (an arc: to its nearer end) and meanders the span from there to `to`'s place along the track. It rewrites the track's whole line (the run of tracks between pads, vias and branches; see `proposal` below) |
 | `spacing` | no | nm, 1..1e8: the meanders' pitch; default 600000 (the engine's). The engine never goes under width + clearance |
 | `amplitude` | no | `[min, max]`, nm, 0 < min ≤ max ≤ 1e8: the meanders' height; default `[200000, 1000000]` (the engine's) |
@@ -371,12 +374,12 @@ binary offers without probing for `unknown_method`; a binary older than 0.4.0 ha
 | `net_mismatch` | a start/end pad on another net; a `tune` `track` (aim `length`) on another net |
 | `layer_mismatch` | a start/end pad not on the route's (or the pair's) layer |
 | `start_not_routable` | the engine refuses to start there (e.g. inside other copper), the pair's start included |
-| `unroutable` | the engine could not reach the end (or a waypoint) in this mode, or land a pair on its end |
+| `unroutable` | the engine could not reach the end (or a waypoint) in this mode, land a pair on its end, or bring a pair's centreline to a waypoint |
 | `collision` | `mark_obstacles` and the straight route violates clearance |
 | `via_not_allowed` | a via waypoint without `via_allowed` (`route`, `route_pair`) |
 | `drag_refused` | the dragger refuses the item/grab point, or the item has no net |
 | `hole_too_close` | the proposal would add a hole closer than `hole_to_hole` to a hole of its own net (or of no net) |
-| `locked` | dragging a locked item; tuning a locked track |
+| `locked` | dragging a locked item; tuning a locked track, or a tune that would change locked copper (a `pair_length` partner's line) |
 | `pair_mismatch` | a `route_pair` end pad not on its member's net; a `tune` `track` on neither member of the pair |
 | `pair_not_coupled` | a `route_pair` `start`/`end` whose `n` end is not the item the engine couples with its `p` end; a `tune` pair aim with no partner track the engine assembles, or no coupled section in the span |
 | `pair_class_mismatch` | the two members' classes differ in `track_width`, `via_diameter` or `via_drill` |

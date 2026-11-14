@@ -160,8 +160,12 @@ public:
     int nlayers() const { return static_cast<int>(m_board.layers.size()); }
 
     std::set<std::string> removed;
-    std::vector<Track> added_tracks;
-    std::vector<Via> added_vias;
+    // What the session's commits added and still hold, keyed by the engine's item: a
+    // pair route commits every fixed leg into the world at once, and a later leg or the
+    // final commit may merge, re-optimise or shove that copper again (review PR #11 r1
+    // M-1), so an item made during the request and removed again leaves the capture.
+    std::vector<Track> added_tracks() const;
+    std::vector<Via> added_vias() const;
 
 private:
     template <typename T, typename... A>
@@ -181,6 +185,8 @@ private:
 
     const Board& m_board;
     PNS::NODE* m_world = nullptr;
+    std::map<const PNS::ITEM*, Track> m_added_tracks;
+    std::map<const PNS::ITEM*, Via> m_added_vias;
     NETINFO_ITEM m_orphan{0, ""};
     std::map<std::string, NETINFO_ITEM> m_nets;
     std::vector<std::unique_ptr<BOARD_ITEM>> m_parents;

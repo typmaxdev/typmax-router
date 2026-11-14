@@ -61,6 +61,8 @@ def clean(b, proposal, what):
     ids = {a["id"] for a in proposal["add"]}
     bad = drc_lite.violations(nb, ids)
     check(not bad, f"{what}: clearance violations {bad[:5]}")
+    twice = drc_lite.overlaps(nb, ids)
+    check(not twice, f"{what}: same-net copper laid twice {twice[:5]}")
     return nb
 
 
@@ -633,6 +635,12 @@ def t_checker_self_test(binary):
                  "end": [20 * MM, 15_800_000], "width": 250_000}  # 0.175 mm from H1's hole (1.5 mm radius)
     bad = drc_lite.violations(dict(b, tracks=[near_hole]), {"x1"})
     check(any(v[1] == "H1.1(hole)" for v in bad), f"hole_clearance violation seen: {bad}")
+    # a stale copy of a proposal's own copper (review PR #11 r1 M-1): seen, and a mere joint is not
+    leg = {"id": "o1", "net": "A", "layer": "F.Cu", "start": [5 * MM, 10 * MM], "end": [8 * MM, 10 * MM], "width": 250_000}
+    longer = dict(leg, id="o2", end=[13 * MM, 10 * MM])
+    after = dict(leg, id="o3", start=[8 * MM, 10 * MM], end=[13 * MM, 10 * MM])
+    check(drc_lite.overlaps({"tracks": [leg, longer]}, {"o2"}) == [("o1", "o2", 3 * MM)], "a laid-twice track is seen")
+    check(drc_lite.overlaps({"tracks": [leg, after]}, {"o3"}) == [], "two tracks meeting end to end are not")
     near_edge = dict(near_hole, id="x2", start=[10 * MM, 200_000], end=[20 * MM, 200_000])
     bad = drc_lite.violations(dict(b, tracks=[near_edge]), {"x2"})
     check(any(v[1] == "edge" for v in bad), f"edge_clearance violation seen: {bad}")
@@ -852,6 +860,13 @@ def seg_gap(s, t):
                           ("capsule", (t["start"], t["end"], t["width"] / 2)))
 
 
+def parallel(s, t):
+    """Two straight tracks pointing the same way (to within rounding)."""
+    a = (s["end"][0] - s["start"][0], s["end"][1] - s["start"][1])
+    b = (t["end"][0] - t["start"][0], t["end"][1] - t["start"][1])
+    return abs(a[0] * b[1] - a[1] * b[0]) <= 1e-6 * math.hypot(*a) * math.hypot(*b)
+
+
 def net_length(board_, net):
     """Track length of a net (every straight track; the boards here hold no arcs)."""
     return sum(math.dist(t["start"], t["end"]) for t in board_["tracks"] if t["net"] == net)
@@ -958,6 +973,48 @@ def t_route_pair_dangling(binary):
         mid = [(far["DP"][0] + far["DN"][0]) / 2, (far["DP"][1] + far["DN"][1]) / 2]
         check(math.dist(mid, [10 * MM, 6 * MM]) <= 2, f"pair centreline ends at {mid}, not the waypoint")
         clean(board("pair"), pr, "dangling pair")
+        # the coupled run sits at exactly `gap` (review PR #11 r1 n-4), here 0.3 mm, not the pads' 0.25 mm
+        pr = c.call("route_pair", dict(req, gap=300_000))["proposal"]
+        ps = [a for a in pr["add"] if a["net"] == "DP"]
+        ns = [a for a in pr["add"] if a["net"] == "DN"]
+        # the long diagonal run to the waypoint (the short fan-out legs beside the pads are not coupled)
+        run = max(ps, key=lambda t: math.dist(t["start"], t["end"]))
+        check(run["end"][1] != run["start"][1], f"the longest DP leg is not the diagonal run: {run}")
+        g = min(seg_gap(run, t) for t in ns if parallel(run, t))
+        check(abs(g - 300_000) <= 2, f"coupled gap {g:.1f} nm, want 300000 +- 2")
+
+
+def pair_legs(waypoints, **kw):
+    return dict(PAIR, waypoints=[{"point": p} for p in waypoints], **kw)
+
+
+def t_route_pair_waypoints(binary):
+    """A waypoint, then more routing (review PR #11 r1 M-1): every leg the placer committed
+    and then merged or shoved again leaves the proposal, so each member is one chain of
+    copper laid once, clean, in walkaround and in shove."""
+    cases = [("pair", pair_legs([[8 * MM, 10_250_000]])),
+             ("pair", pair_legs([[8 * MM, 10_250_000], [10 * MM, 10_250_000]])),
+             ("pair_shove", pair_legs([[12 * MM, 10_250_000]], mode="shove")),
+             ("pair_shove", pair_legs([[8 * MM, 10_250_000], [14 * MM, 10_250_000]], mode="shove"))]
+    with RouterClient(binary) as c:
+        for name, req in cases:
+            b = board(name)
+            c.call("load_board", {"board": b})
+            pr = c.call("route_pair", req)["proposal"]
+            what = f"{name} {req.get('mode', 'walkaround')} {len(req['waypoints'])} waypoint(s)"
+            clean(b, pr, what)
+            check(connected(pr, "DP", pad_pos(b, "U1.1"), pad_pos(b, "U2.1")), f"{what}: DP not connected")
+            check(connected(pr, "DN", pad_pos(b, "U1.2"), pad_pos(b, "U2.2")), f"{what}: DN not connected")
+            if name == "pair_shove":
+                check("trk-c2" in pr["remove"], f"{what}: shove did not move trk-c2")
+                cs = [a for a in pr["add"] if a["net"] == "C"]
+                check(connected(pr, "C", pad_pos(b, "J1.1"), pad_pos(b, "J2.1")), f"{what}: net C broken")
+                check(len(cs) == len({(tuple(a["start"]), tuple(a["end"])) for a in cs}), f"{what}: net C twice")
+        # the dangling pair of two collinear waypoints is one run, as route's is
+        req = {k: v for k, v in pair_legs([[8 * MM, 10_250_000], [10 * MM, 10_250_000]]).items() if k != "end"}
+        c.call("load_board", {"board": board("pair")})
+        pr = c.call("route_pair", req)["proposal"]
+        clean(board("pair"), pr, "dangling, two collinear waypoints")
 
 
 def t_route_pair_errors(binary):
@@ -981,6 +1038,9 @@ def t_route_pair_errors(binary):
         expect_error(c, "route_pair", dict(PAIR, end={"p": {"pad": "U2.1"}, "n": {"pad": "U3.1"}}), "pair_mismatch")
         expect_error(c, "route_pair", dict(PAIR, layer="B.Cu"), "layer_mismatch")
         expect_error(c, "route_pair", dict(PAIR, gap=199_999), "gap_too_small")
+        # a waypoint inside the net-B pad: the placer stops short of it (review PR #11 r1 M-2)
+        err = expect_error(c, "route_pair", pair_legs([[15 * MM, 10_250_000]]), "unroutable")
+        check("waypoint 0" in err["message"], f"unroutable names the waypoint: {err}")
         c.call("route_pair", dict(PAIR, gap=200_000))  # at the clearance: admitted
         expect_error(c, "route_pair", dict(PAIR, via_gap=199_999), "gap_too_small")
         expect_error(c, "route_pair", dict(PAIR, end={"p": {"pad": "U2.1"}, "n": {"pad": "U4.1"}}), "pair_not_coupled")
@@ -1147,6 +1207,12 @@ def t_tune_errors(binary):
         c.call("load_board", {"board": board("tune_pair")})
         expect_error(c, "tune", dict(TUNE_PAIR, p="DP", n="A"), "unknown_net")
         expect_error(c, "tune", dict(TUNE_PAIR, track="trk-n1", n="DX", p="DP"), "unknown_net")
+        held = board("tune_pair")
+        held["tracks"][1] = dict(held["tracks"][1], locked=True)  # trk-n1, the partner
+        c.call("load_board", {"board": held})
+        err = expect_error(c, "tune", TUNE_PAIR, "locked")
+        check("trk-n1" in err["message"], f"locked names the partner: {err}")
+        c.call("tune", dict(TUNE_PAIR, aim="skew", target=1 * MM))  # skew leaves the partner: admitted
         uncoupled = board("tune_pair")
         uncoupled["tracks"][1] = dict(uncoupled["tracks"][1], end=[25 * MM, 15 * MM])  # not parallel
         c.call("load_board", {"board": uncoupled})
@@ -1165,7 +1231,7 @@ SYNTHETIC = [t_checker_self_test, t_protocol_errors, t_base_revision_required, t
              t_one_layer_via, t_via_at_trace_end, t_integers_only, t_utf8, t_duplicate_keys_linear, t_parse_is_time_limited,
              t_max_line_is_bounded, t_argv_strict, t_internal_crash, t_engine_identity, t_error_detail, t_converter, t_fixture_zone_filter, t_spdx_headers, t_no_local_paths, t_patch_notices, t_timeout,
              t_ping_methods, t_route_pair, t_route_pair_shove, t_route_pair_vias, t_route_pair_dangling,
-             t_route_pair_errors, t_tune_length, t_tune_keeps_untouched, t_tune_shape, t_tune_pair, t_tune_errors]
+             t_route_pair_waypoints, t_route_pair_errors, t_tune_length, t_tune_keeps_untouched, t_tune_shape, t_tune_pair, t_tune_errors]
 
 
 # ---- determinism ---------------------------------------------------------------
@@ -1213,10 +1279,14 @@ def determinism_requests():
                   ("tune", dict(TUNE, target=10 * MM))]),
         ("tune_pair", [("tune", TUNE_PAIR),
                        ("tune", dict(TUNE_PAIR, aim="skew", target=1 * MM))]),
+        # PR #11 r1 M-1: a waypoint, then more routing, in walkaround and in shove
+        ("pair_legs", [("route_pair", pair_legs([[8 * MM, 10_250_000]]))]),
+        ("pair_legs_shove", [("route_pair", pair_legs([[8 * MM, 10_250_000], [14 * MM, 10_250_000]], mode="shove"))]),
     ]
 
 
-BOARD_OF = {"shove_drag": "shove", "arc_shove": "arc", "pair_vias": "pair_shove"}
+BOARD_OF = {"shove_drag": "shove", "arc_shove": "arc", "pair_vias": "pair_shove", "pair_legs": "pair",
+            "pair_legs_shove": "pair_shove"}
 
 
 def run_steps(c, name, steps):

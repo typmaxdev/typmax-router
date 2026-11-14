@@ -165,15 +165,25 @@ int end_layer(const PairRequest& rq)
     return layer;
 }
 
-// Both members' head lines hold copper (a fix needs a segment of each).
-bool has_heads(PNS::ROUTER& r)
+// The midpoint of the two members' head ends, where the pair's centreline ends now;
+// none while either head holds no segment (a fix needs a segment of each).
+std::optional<VECTOR2I> head_mid(PNS::ROUTER& r)
 {
-    int lines = 0;
+    std::vector<VECTOR2I> ends;
     PNS::ITEM_SET ts = r.Placer()->Traces();
     for (PNS::ITEM* it : ts.Items())
         if (it->Kind() == PNS::ITEM::LINE_T && static_cast<PNS::LINE*>(it)->SegmentCount() > 0)
-            lines++;
-    return lines == 2;
+            ends.push_back(static_cast<PNS::LINE*>(it)->CPoint(-1));
+    if (ends.size() != 2)
+        return std::nullopt;
+    return VECTOR2I((ends[0].x + ends[1].x) / 2, (ends[0].y + ends[1].y) / 2);
+}
+
+// How far the pair's centreline may end from a waypoint and still have reached it: the
+// gateways snap the twin heads to the 45-degree grid around the click (half a pitch).
+int64_t reach_tolerance(const Board& b, const PairRequest& rq)
+{
+    return (rq.gap + b.rules.class_for(rq.p).track_width) / 2;
 }
 
 // One waypoint: the pair's centreline is fixed there (and twin vias placed).
@@ -184,14 +194,15 @@ void pair_waypoint(Session& s, const Board& b, const PairRequest& rq, size_t i, 
     const std::string at = "waypoint " + std::to_string(i);
     if (w.via && !rq.via_allowed)
         throw RequestError("via_not_allowed", at + " asks for a via but via_allowed is false");
-    if (i > 0 && rq.waypoints[i - 1].point == w.point)
-        throw RequestError("invalid_params", at + " is where the pair already is; move first");
     bool ok = s.router.Move(wp, nullptr);
     if (w.via) {
         s.router.ToggleViaPlacement();
         ok = s.router.Move(wp, nullptr);
     }
-    if (!ok || !has_heads(s.router))
+    const std::optional<VECTOR2I> mid = ok ? head_mid(s.router) : std::nullopt;
+    // as route refuses a waypoint its trace does not end on: the placer keeps its last
+    // good trace when the gateways do not fit, short of the click (review PR #11 r1 M-2)
+    if (!mid || (*mid - wp).EuclideanNorm() > static_cast<double>(reach_tolerance(b, rq)))
         throw refusal(s.router, "unroutable", "PNS could not bring the pair to " + at);
     s.router.FixRoute(wp, nullptr, false, false); // chained: returns false by design
     if (w.via) {

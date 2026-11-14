@@ -193,6 +193,20 @@ Proposal without_unchanged(const Proposal& p, const Board& b)
     return out;
 }
 
+// Only the named track is checked before the engine runs; the engine may still hand back
+// other copper it rewrote: a pair tune meanders the partner's line, and a line's other
+// tracks may come back merged (review PR #11 r1 m-3). A locked item is never changed.
+void refuse_locked(const Board& b, const Proposal& p)
+{
+    for (const auto& id : p.remove) {
+        const Track* t = b.find_track(id);
+        const Via* v = t ? nullptr : b.find_via(id);
+        if ((t && t->locked) || (v && v->locked))
+            throw RequestError("locked", "the tune would change \"" + id + "\", which is locked (the partner's line, or "
+                                         "another track of the tuned line)");
+    }
+}
+
 // The placer's answer once it has started on the span.
 TuneResult tune_span(Session& s, const Board& b, const TuneRequest& rq, const Track& t, long long partner)
 {
@@ -214,6 +228,7 @@ TuneResult tune_span(Session& s, const Board& b, const TuneRequest& rq, const Tr
         s.router.FixRoute(vi(rq.to), nullptr, false, false);
         s.router.CommitRouting();
         r.proposal = without_unchanged(make_proposal(s.iface, b), b);
+        refuse_locked(b, r.proposal);
     }
     return r;
 }

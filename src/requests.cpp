@@ -124,6 +124,9 @@ PairRequest parse_route_pair(const tj::Value& p, const Board& b)
     r.waypoints = waypoints_param(p, b);
     if (!r.end && r.waypoints.empty())
         bad_params("a pair route needs an \"end\" or at least one waypoint");
+    for (size_t i = 1; i < r.waypoints.size(); i++)
+        if (r.waypoints[i].point == r.waypoints[i - 1].point)
+            bad_params("waypoint " + std::to_string(i) + " is where the pair already is; move first");
     required(p, "gap");
     r.gap = *opt_size(p, "gap");
     r.via_gap = opt_size(p, "via_gap");
