@@ -49,7 +49,7 @@ includes but uses nothing from is an empty stand-in that says so.
 | `thread_pool.h` | KiCad's thread pool | runs a submitted loop inline, in index order (`NODE::NearestObstacle` is its one user and reduces in index order) |
 | `wx/*.h`, `kiid.h`, `units_provider.h`, `config.h` | wxWidgets, KIID, units, the generated `config.h` | a `std::string`-based `wxString` with `Format`; logging compiled out; the `wxCHECK` family keeps its early returns |
 | `gal/*.h`, `pcb_painter.h`, `router_preview_item.h` | the GAL view | the colour type and the display flags the core names |
-| `length_delay_calculation/*.h` | length/delay tuning | the pad/via clipping helpers tuning calls; the service does not tune, so they leave a line unchanged |
+| `length_delay_calculation/*.h` | length/delay tuning | the pad/via clipping helpers tuning calls; `tune` counts track length only (PROTOCOL.md), so they leave a line unchanged |
 | `shim/time_limit.cpp` | `pcbnew/router/time_limit.cpp` | `std::chrono::steady_clock` instead of wxWidgets' clock; `INT_MAX` ms means "no limit"; the test hook `TYPMAX_ROUTER_TEST_CLOCK=expired` |
 
 ### Patches (`patches/`, 4 files, 321 lines; 108 lines added and 12 removed in upstream code, comments and the notices included)

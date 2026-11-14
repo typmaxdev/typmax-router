@@ -38,12 +38,12 @@ Request:
 |---|---|---|
 | `id` | string, integer or null | echoed in the response; the client's correlation key |
 | `protocol_version` | integer | must be `2`; anything else is `unsupported_protocol_version` |
-| `method` | string | `ping`, `stats`, `load_board`, `route`, `drag`, `apply` |
+| `method` | string | `ping`, `stats`, `load_board`, `route`, `drag`, `apply`, `route_pair`, `tune` (`ping.methods` lists them) |
 | `params` | object (optional) | per method; two keys are common to all methods, below |
 
 Common params: `time_limit_ms` (integer 1..600000, default the
 `--time-limit-ms` flag, itself defaulting to 10000) and `timing` (boolean,
-default false: adds `elapsed_ms`, and for `route`/`drag` `world_ms`, to the
+default false: adds `elapsed_ms`, and for `route`/`drag`/`route_pair`/`tune` `world_ms`, to the
 result; timings are the only nondeterministic bytes a response can carry, so
 they are opt-in).
 
@@ -196,7 +196,7 @@ Result:
 
 ```json
 {"revision": 0,
- "engine": {"name": "typmax-router", "version": "0.3.1",
+ "engine": {"name": "typmax-router", "version": "0.4.0",
             "pns": "KiCad 10.0.7 pcbnew/router @ 69cafb907ebc", "protocol": 2},
  "proposal": {
    "remove": ["trk-c1", "trk-c2"],
@@ -258,9 +258,99 @@ Atomic: every `remove` id must exist and every added id must be new after the
 removals, else `stale_proposal` and the board is unchanged. Result:
 `{"revision": n+1, "removed": k, "added": m, "counts": {...}}`.
 
+## `route_pair`
+
+Runs the differential-pair placer (KiCad's `DIFF_PAIR_PLACER`) from a pair of
+start ends to a pair of end ends and returns a **proposal** holding both
+members' copper. It never changes the loaded board; `apply` does.
+
+| Param | Required | Meaning |
+|---|---|---|
+| `p`, `n` | yes | the pair's two nets, different (else `invalid_params`); each carried by some item of the board (else `unknown_net`). The service couples exactly these two: no net-name suffix is read |
+| `layer` | yes | the layer the pair starts on |
+| `start` | yes | `{"p": end, "n": end}`, each end of `route`'s shape: `{"pad": id}` (on that member's net, else `pair_mismatch`; on `layer`, else `layer_mismatch`) or `{"point": [x, y]}` (the member's copper there, on `layer`, which the pair starts from as the engine does: from its free end; else a point of the member's net). The engine couples `start.p` with the **nearest item of net `n` of the same kind** (pad with pad, via with via, track with track; a free point counts as a pad): `start.n` must be that item, else `pair_not_coupled` |
+| `end` | no | the same shape; the pair lands on both ends, on the layer the last via waypoint names (else `layer`), and the same coupling rule holds. Omitted = the pair ends at its last waypoint (dangling) |
+| `waypoints` | no | as `route`'s: up to 1000 `{"point": [x, y], "via": bool, "layer": name}`, each a click that fixes the pair so far; `point` is where the pair's **centreline** goes. `via: true` places twin through vias, one per member, `via_gap` apart, and continues on `layer`. A waypoint equal to the one before it is `invalid_params` |
+| `gap` | yes | the members' gap, edge to edge, nm. Under the larger of the two classes' `clearance` is `gap_too_small` (equal to it is admitted) |
+| `via_gap` | no | the twin vias' copper, edge to edge, nm. Default, and least: what the rules admit, `max(clearance, hole_to_hole − 2a, hole_clearance − a)` with `a = (via_diameter − via_drill) / 2` (integer nm) and `clearance` the larger class's; under it is `gap_too_small` |
+| `mode` | no | `walkaround` (default) or `shove` (other nets' tracks and vias pushed aside, in the proposal's `remove`/`add`); `mark_obstacles` is `invalid_params` |
+| `via_allowed` | no | default false; a `via` waypoint without it is `via_not_allowed` |
+
+Either `end` or at least one waypoint is required.
+
+Sizes come from the members' net classes, as `route`'s defaults do: `track_width`,
+`via_diameter` and `via_drill`. The engine draws both members at one size, so two
+classes that differ in any of the three are `pair_class_mismatch`; there is no
+`width` override.
+
+Result: `route`'s shape (`revision`, `engine`, `proposal`), both members' new
+copper in one `add`, sorted and named as `route`'s. The guarantees table holds for
+both members (P against N is two nets: the larger clearance), and the service's
+`hole_too_close` check covers the twin vias.
+
+- Where the pair is coupled its members run at `gap`. Around an obstacle the
+  engine walks each member on its own: a pair may split, one member each side
+  of an obstacle, rather than go round it together (`tests/boards/pair.json`).
+- Determinism and the golden-line gate are `route`'s.
+
+## `tune`
+
+Meanders a span of one track toward a target length with KiCad's meander
+placers and returns a proposal plus the length the engine counts.
+
+| Param | Required | Meaning |
+|---|---|---|
+| `aim` | yes | `length`: one net (the single-track tuner, `MEANDER_PLACER`); `pair_length`: a pair, both members meandered together (`DP_MEANDER_PLACER`); `skew`: one member of a pair against its partner (`MEANDER_SKEW_PLACER`) |
+| `net` | for `length` | the net tuned; with `p`/`n` it is `invalid_params` |
+| `p`, `n` | for `pair_length`, `skew` | the pair's nets, different; with `net` it is `invalid_params`. A net no item carries is `unknown_net` |
+| `target` | yes | integer nm. `length`, `pair_length`: the length wanted, 1..1e10. `skew`: the tuned member's length less its partner's, −1e9..1e9 |
+| `tolerance` | yes | integer nm, 0..1e9: the window is `target ± tolerance` (for `skew`, `abs(target) + tolerance` ≤ 1e9) |
+| `track` | yes | the id of the track the span is on (else `unknown_item`): on `net` (else `net_mismatch`), or on `p` or `n` (else `pair_mismatch`); a `locked` track is `locked`. For `skew` the member tuned is this track's net |
+| `from`, `to` | yes | two different points on the track's copper (within its width, else `invalid_params`). The engine snaps `from` onto the track's centreline (an arc: to its nearer end) and meanders its line from there to `to`'s place along it. The line is the engine's: the run of tracks between pads, vias and branches, so a span may continue past this track onto the next track of its line |
+| `spacing` | no | nm, 1..1e8: the meanders' pitch; default 600000 (the engine's). The engine never goes under width + clearance |
+| `amplitude` | no | `[min, max]`, nm, 0 < min ≤ max ≤ 1e8: the meanders' height; default `[200000, 1000000]` (the engine's) |
+| `corners` | no | `chamfer` (default): 45° corners of KiCad's default size (80 % of half the spacing); `square`: the sharpest corner the engine draws, a 45° chamfer of half the track width (it refuses any sharper, KiCad issue 8629). Arcs are not offered yet |
+| `single_sided` | no | default false: every meander on one side of the line |
+| `mode` | no | `walkaround` only (the default): the meander placers fit a meander only where it collides with nothing and never shove; anything else is `invalid_params` |
+
+`pair_length` and `skew` need a pair the engine can assemble from the track: a
+partner track of the other member, parallel, at the same width, on the same layer
+(else `pair_not_coupled`), and a coupled section inside the span (else
+`pair_not_coupled`).
+
+Result:
+
+```json
+{"revision": 0, "engine": {...},
+ "proposal": {"remove": ["trk-a1"], "add": [...]},
+ "length": 25000014, "status": "tuned"}
+```
+
+- `length` (integer nm): the tuned member's length **as the engine counts it,
+  track length only**: every segment and arc of the engine's tuning path (one path
+  from pad to pad, through vias) at its drawn length; vias add 0, pads add no
+  pad-to-die length, and no part inside a pad is clipped off. A branch or stub off
+  that path is not counted, so on a branched net it is less than the sum over every
+  track of the net. With a proposal, it is the length the proposal gives. For
+  `pair_length` it is the **longer** member's (the engine tunes a pair by it); for
+  `skew`, the tuned member's.
+- `skew` (for `aim: skew` only, integer nm): the tuned member's length less its
+  partner's, counted the same way.
+- `status`: `tuned` (inside the window), `too_short` (the span had no room for
+  enough meanders: the proposal adds what fits, and `length` is short of the
+  window), `too_long` (the line is already longer than the window allows; meanders
+  only add length, so the proposal is empty and `length` is the length now).
+- `proposal`: the engine rewrites the whole line it tunes; tracks it gives back
+  unchanged are left out (neither removed nor added). An empty proposal changes
+  nothing.
+- Determinism and the golden-line gate are `route`'s.
+
 ## `ping`, `stats`
 
-`ping` → `{"pong": true, "service": "typmax-router", "version": "...", "engine": {...}}` (the same `engine` object as a proposal's).
+`ping` → `{"pong": true, "service": "typmax-router", "version": "...", "engine": {...}, "methods": [...]}` (the same `engine` object as a proposal's;
+`methods`, since service 0.4.0: every method this binary serves, as strings, in this document's order —
+`["ping", "stats", "load_board", "route", "drag", "apply", "route_pair", "tune"]` — so a client learns what a
+binary offers without probing for `unknown_method`; a binary older than 0.4.0 has no `methods` key).
 `stats` → `{"loaded", "revision", "counts", "requests", "last_elapsed_ms", "default_time_limit_ms"}`
 (`stats` carries timings and is not deterministic).
 
@@ -275,18 +365,23 @@ removals, else `stale_proposal` and the board is unchanged. Result:
 | `request_too_large` | line over `--max-line-bytes` |
 | `invalid_params` | a param missing, of the wrong type or out of range |
 | `invalid_board` | the board fails validation; the message names the JSON path |
-| `no_board` | `route`/`drag`/`apply` before `load_board` |
-| `unknown_net` | `route` on a net no board item carries (a net named only in `net_classes` included) |
-| `unknown_item` | a pad/track/via id that does not exist |
-| `net_mismatch` | a start/end pad on another net |
-| `layer_mismatch` | a start/end pad not on the route's layer |
-| `start_not_routable` | the engine refuses to start there (e.g. inside other copper) |
-| `unroutable` | the engine could not reach the end (or a waypoint) in this mode |
+| `no_board` | `route`/`drag`/`apply`/`route_pair`/`tune` before `load_board` |
+| `unknown_net` | `route`, `route_pair` or `tune` on a net no board item carries (a net named only in `net_classes` included) |
+| `unknown_item` | a pad/track/via id that does not exist (a `tune` `track` that is no track) |
+| `net_mismatch` | a start/end pad on another net; a `tune` `track` (aim `length`) on another net |
+| `layer_mismatch` | a start/end pad not on the route's (or the pair's) layer |
+| `start_not_routable` | the engine refuses to start there (e.g. inside other copper), the pair's start included |
+| `unroutable` | the engine could not reach the end (or a waypoint) in this mode, or land a pair on its end |
 | `collision` | `mark_obstacles` and the straight route violates clearance |
-| `via_not_allowed` | a via waypoint without `via_allowed` |
+| `via_not_allowed` | a via waypoint without `via_allowed` (`route`, `route_pair`) |
 | `drag_refused` | the dragger refuses the item/grab point, or the item has no net |
 | `hole_too_close` | the proposal would add a hole closer than `hole_to_hole` to a hole of its own net (or of no net) |
-| `locked` | dragging a locked item |
+| `locked` | dragging a locked item; tuning a locked track |
+| `pair_mismatch` | a `route_pair` end pad not on its member's net; a `tune` `track` on neither member of the pair |
+| `pair_not_coupled` | a `route_pair` `start`/`end` whose `n` end is not the item the engine couples with its `p` end; a `tune` pair aim with no partner track the engine assembles, or no coupled section in the span |
+| `pair_class_mismatch` | the two members' classes differ in `track_width`, `via_diameter` or `via_drill` |
+| `gap_too_small` | a `route_pair` `gap` under the pair's clearance, or a `via_gap` under the least the rules admit |
+| `tune_refused` | the meander placer refuses the span (e.g. `from` snaps onto the centreline where `to` is) |
 | `stale_proposal` | `apply` with a wrong `base_revision`, a missing remove id, or a duplicate id |
 | `timeout` | **fatal**: the request exceeded its time limit (or its line did not parse within the default limit: `id` null) |
 | `internal_error` | an engine exception; the service continues |
@@ -307,10 +402,24 @@ restarts the service and sends `load_board` again (and replays its applies).
 ## Versioning
 
 `protocol_version` changes on any incompatible change to this document.
-Additive changes (a new optional param, a new result key, a new error code)
-keep the version; clients ignore keys they do not know.
+Additive changes (a new method, a new optional param, a new result key, a new
+error code) keep the version; clients ignore keys they do not know, and learn a
+binary's methods from `ping.methods` (a binary without the key predates 0.4.0 and
+serves the six methods of service 0.3.1).
 
 ## Changelog
+
+### service 0.4.0 (protocol 2, additive)
+
+- Methods `route_pair` (KiCad's differential-pair placer) and `tune` (its
+  single-track, pair-length and pair-skew meander placers); error codes
+  `pair_mismatch`, `pair_not_coupled`, `pair_class_mismatch`, `gap_too_small` and
+  `tune_refused`.
+- `ping` carries `methods`.
+- Versioning names a new method as an additive change.
+- No answer to an existing request changed beyond `engine.version` (and `ping`'s
+  new key): the golden lines of the earlier requests differ from 0.3.1's only in
+  the version string.
 
 ### service 0.3.1 (protocol 2, unchanged on the wire)
 
