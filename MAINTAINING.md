@@ -203,7 +203,7 @@ The watch runs on **GitHub-hosted runners**, not on a developer's machine:
   with the report as its body. **Nothing is merged**: a person reviews it and finishes
   steps 4–5 of the routine above (classify the golden lines, re-record, bump
   `engine.version`).
-- **`macos-gate`** (macos-14, arm64): builds the same branch and records its golden
+- **`macos-gate`** (macos-15, arm64): builds the same branch and records its golden
   lines, which must be byte-identical to both Linux sets from `update` (the Ubuntu clang
   build's and the docker image's); the result is a comment on the pull request. Every
   build the watcher compares is a clang build.
