@@ -3,13 +3,14 @@
 # typmax-router
 
 A PCB routing service built on [KiCad](https://www.kicad.org/)'s push-and-shove
-router. A client loads a board as JSON, asks for a route or a drag, and gets back a
-**proposal** (the tracks and vias to remove and add), which it may `apply` to chain
-further requests. It speaks JSON Lines on stdin/stdout; [PROTOCOL.md](PROTOCOL.md)
-is the contract.
+router. A client loads a board as JSON, asks for a route, a differential pair, a drag
+or a meander, and gets back a **proposal** (the tracks and vias to remove and add),
+which it may `apply` to chain further requests. It speaks JSON Lines on stdin/stdout;
+[PROTOCOL.md](PROTOCOL.md) is the contract.
 
 - Walkaround, shove and mark-obstacles modes; drags; vias at waypoints; arcs; rules
   per net class plus edge, hole and hole-to-hole clearances.
+- Differential pairs (`route_pair`) and length and skew tuning with meanders (`tune`).
 - Deterministic: the same requests give byte-identical answers across runs and
   between macOS arm64 and Linux x86_64 (a CI gate).
 - Errors, never crashes: one answer line per request, with a stable error code; a

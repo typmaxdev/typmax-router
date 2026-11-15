@@ -58,12 +58,56 @@ struct DragRequest {
     Mode mode = Mode::Shove;
 };
 
+// A pair's two route ends, one per member.
+struct PairEnd {
+    Anchor p, n;
+};
+
+struct PairRequest {
+    std::string p, n; // the members' nets
+    int layer = 0;
+    PairEnd start;
+    std::optional<PairEnd> end;
+    std::vector<Waypoint> waypoints; // the pair's centreline points
+    int64_t gap = 0;                 // edge to edge
+    std::optional<int64_t> via_gap;  // twin vias' copper, edge to edge
+    Mode mode = Mode::Walkaround;
+    bool via_allowed = false;
+};
+
+enum class Aim { Length, PairLength, Skew };
+enum class Corners { Square, Chamfer };
+
+struct TuneRequest {
+    Aim aim = Aim::Length;
+    std::string net;  // Aim::Length
+    std::string p, n; // the pair aims
+    int64_t target = 0, tolerance = 0;
+    std::string track; // the span: a track and two points on it
+    Pt from, to;
+    std::optional<int64_t> spacing;
+    std::optional<int64_t> amp_min, amp_max;
+    Corners corners = Corners::Chamfer;
+    bool single_sided = false;
+};
+
+enum class TuneStatus { Tuned, TooShort, TooLong };
+
+struct TuneResult {
+    Proposal proposal;
+    int64_t length = 0; // the tuned member's length as the engine counts it, track length only
+    int64_t skew = 0;   // Aim::Skew: the tuned member's length less its partner's
+    TuneStatus status = TuneStatus::TooShort;
+};
+
 // Wall time of the last PNS world build (SyncWorld), for `timing` responses.
 extern double g_last_world_ms;
 
-// Both throw RequestError for a request the router refuses (with a code).
+// All throw RequestError for a request the router refuses (with a code).
 Proposal run_route(const Board& b, const RouteRequest& r);
 Proposal run_drag(const Board& b, const DragRequest& r);
+Proposal run_route_pair(const Board& b, const PairRequest& r); // pair.cpp
+TuneResult run_tune(const Board& b, const TuneRequest& r);    // tune.cpp
 
 // Apply a proposal to a board snapshot; returns the new snapshot.
 std::shared_ptr<Board> apply_proposal(const Board& b, const Proposal& p);

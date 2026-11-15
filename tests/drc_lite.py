@@ -207,6 +207,35 @@ def violations(board, only_ids=None):
     return bad
 
 
+def overlaps(board, only_ids=None):
+    """Same-net copper laid twice: two straight tracks of one net and layer on one line
+    whose spans share a length (more than TOL), at least one of them in `only_ids`.
+    Clearance never sees it (same-net pairs never collide), so a proposal that keeps a
+    stale copy of its own copper passes `violations` (review PR #11 r1 M-1)."""
+    ts = [t for t in board.get("tracks", []) if "mid" not in t]
+    bad = []
+    for i, a in enumerate(ts):
+        for b in ts[i + 1:]:
+            if a["net"] != b["net"] or a["layer"] != b["layer"]:
+                continue
+            if only_ids is not None and a["id"] not in only_ids and b["id"] not in only_ids:
+                continue
+            (ax, ay), (bx, by) = a["start"], a["end"]
+            dx, dy = bx - ax, by - ay
+            n = math.hypot(dx, dy)
+            if n == 0:
+                continue
+            ux, uy = dx / n, dy / n
+            off = [abs((p[0] - ax) * uy - (p[1] - ay) * ux) for p in (b["start"], b["end"])]
+            if max(off) > TOL:
+                continue  # not on a's line
+            ts_ = sorted((p[0] - ax) * ux + (p[1] - ay) * uy for p in (b["start"], b["end"]))
+            shared = min(n, ts_[1]) - max(0.0, ts_[0])
+            if shared > TOL:
+                bad.append((a["id"], b["id"], round(shared)))
+    return bad
+
+
 def apply(board, proposal):
     """The proposal applied to a copy of the board (what `apply` does server-side)."""
     import copy

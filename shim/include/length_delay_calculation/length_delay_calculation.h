@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 The typmax-router authors
 // Stands in for KiCad's pcbnew/length_delay_calculation: the pad/via clipping
 // helpers TOPOLOGY calls when it assembles a TUNING path (length/skew meanders).
-// The service never tunes, so they leave the line as it is.
+// `tune` counts track length only, nothing clipped inside a pad or via
+// (PROTOCOL.md), so they leave the line as it is.
 #pragma once
 
 #include <geometry/shape_line_chain.h>

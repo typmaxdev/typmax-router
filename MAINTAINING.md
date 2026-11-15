@@ -31,9 +31,10 @@ ctest --test-dir build --output-on-failure    # synthetic, determinism, fixtures
 python3 tests/run_tests.py --binary build/typmax-router --suite synthetic
 ```
 
-- `synthetic`: seven boards of our own in `tests/boards/` (walkaround, shove, via,
-  unroutable, power, holes, arc — regenerate with `tests/gen_boards.py`), the
-  protocol's error paths, apply/chain, drag, free-point starts, the timeout and crash
+- `synthetic`: eleven boards of our own in `tests/boards/` (walkaround, shove, via,
+  unroutable, power, holes, arc, pair, pair_shove, tune, tune_pair — regenerate with
+  `tests/gen_boards.py`), the protocol's error paths, apply/chain, drag, free-point
+  starts, `route_pair` and `tune` (each aim, each error code), the timeout and crash
   paths, and a regression test for each defect found in review;
   every proposal is checked by an independent rule checker (`tests/drc_lite.py`:
   copper, hole-to-hole, hole and edge clearance), which a self-test proves can fail.

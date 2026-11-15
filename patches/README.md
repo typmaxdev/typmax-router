@@ -4,7 +4,7 @@
 
 Our changes to the vendored KiCad files, as an ordered series (`series` lists
 them; SOURCE.md, "Patches", says what each one changes and why). At KiCad
-10.0.7 there are four, all fixes of upstream router behaviour; everything else
+10.0.7 there are five, all fixes of upstream router behaviour; everything else
 that differs from KiCad's own build is a stand-in header or source under
 `shim/` (SOURCE.md lists each one and why). A patch is the last resort, for a
 change no stand-in can make.

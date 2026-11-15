@@ -22,13 +22,14 @@
 #include "board.hpp"
 #include "engine.hpp"
 #include "json.hpp"
+#include "params.hpp"
 
 namespace {
 
 constexpr int PROTOCOL_VERSION = 2;
 // Bump SERVICE_VERSION whenever the same request could get a different answer
 // (a KiCad update does: MAINTAINING.md "Updating to a new KiCad release").
-constexpr const char* SERVICE_VERSION = "0.3.1";
+constexpr const char* SERVICE_VERSION = "0.4.0";
 // The vendored KiCad, from vendor/kicad.manifest (CMakeLists.txt)
 constexpr const char* PNS_SOURCE = "KiCad " TYPMAX_KICAD_TAG " pcbnew/router @ " TYPMAX_KICAD_COMMIT;
 constexpr size_t WORKER_STACK = 64 * 1024 * 1024; // PNS recursion is deep (an earlier prototype: 64 KB crashes)
@@ -111,99 +112,7 @@ struct State {
 
 State g_state;
 
-[[noreturn]] void bad_params(const std::string& m) { throw tr::RequestError("invalid_params", m); }
-
-const tj::Value* opt(const tj::Value& p, const char* k)
-{
-    const tj::Value* v = p.find(k);
-    return (v && !v->is_null()) ? v : nullptr;
-}
-
-std::string req_str(const tj::Value& p, const char* k)
-{
-    const tj::Value* v = opt(p, k);
-    if (!v || !v->is_string())
-        bad_params(std::string("\"") + k + "\" must be a string");
-    return v->as_string();
-}
-
-bool opt_bool(const tj::Value& p, const char* k, bool d)
-{
-    const tj::Value* v = opt(p, k);
-    if (!v)
-        return d;
-    if (!v->is_bool())
-        bad_params(std::string("\"") + k + "\" must be a boolean");
-    return v->as_bool();
-}
-
-std::optional<int64_t> opt_size(const tj::Value& p, const char* k)
-{
-    const tj::Value* v = opt(p, k);
-    if (!v)
-        return std::nullopt;
-    if (!v->is_int() || v->as_int() <= 0 || v->as_int() > 100000000)
-        bad_params(std::string("\"") + k + "\" must be a positive integer (nm, <= 100 mm)");
-    return v->as_int();
-}
-
-tr::Pt point_param(const tj::Value& v, const std::string& where)
-{
-    try {
-        return tr::parse_point(v, where);
-    }
-    catch (const tr::RequestError& e) {
-        bad_params(e.what());
-    }
-}
-
-int layer_param(const tj::Value& v, const tr::Board& b, const std::string& where)
-{
-    if (!v.is_string())
-        bad_params(where + " must be a layer name");
-    int l = b.layer_index(v.as_string());
-    if (l < 0)
-        bad_params(where + ": unknown copper layer \"" + v.as_string() + "\"");
-    return l;
-}
-
-tr::Mode mode_param(const tj::Value& p, tr::Mode d)
-{
-    const tj::Value* v = opt(p, "mode");
-    if (!v)
-        return d;
-    if (!v->is_string())
-        bad_params("\"mode\" must be walkaround, shove or mark_obstacles");
-    const std::string& m = v->as_string();
-    if (m == "walkaround")
-        return tr::Mode::Walkaround;
-    if (m == "shove")
-        return tr::Mode::Shove;
-    if (m == "mark_obstacles")
-        return tr::Mode::MarkObstacles;
-    bad_params("\"mode\" must be walkaround, shove or mark_obstacles; got \"" + m + "\"");
-}
-
-tr::Anchor anchor_param(const tj::Value& v, const char* which)
-{
-    tr::Anchor a;
-    if (!v.is_object())
-        bad_params(std::string(which) + " must be {\"pad\": id} or {\"point\": [x, y]}");
-    const tj::Value* pad = opt(v, "pad");
-    const tj::Value* pnt = opt(v, "point");
-    if ((pad != nullptr) == (pnt != nullptr))
-        bad_params(std::string(which) + " must name exactly one of \"pad\" or \"point\"");
-    if (pad) {
-        if (!pad->is_string())
-            bad_params(std::string(which) + ".pad must be a pad id");
-        a.is_pad = true;
-        a.pad_id = pad->as_string();
-    }
-    else {
-        a.point = point_param(*pnt, std::string(which) + ".point");
-    }
-    return a;
-}
+using namespace tr::params;
 
 const tr::Board& need_board()
 {
@@ -262,28 +171,7 @@ tj::Value do_route(const tj::Value& p)
     r.start = anchor_param(*start, "start");
     if (const tj::Value* e = opt(p, "end"))
         r.end = anchor_param(*e, "end");
-    if (const tj::Value* w = opt(p, "waypoints")) {
-        if (!w->is_array() || w->as_array().size() > 1000)
-            bad_params("\"waypoints\" must be an array of at most 1000 waypoints");
-        for (size_t i = 0; i < w->as_array().size(); i++) {
-            const tj::Value& x = w->as_array()[i];
-            std::string where = "waypoints[" + std::to_string(i) + "]";
-            if (!x.is_object() || !opt(x, "point"))
-                bad_params(where + " must be {\"point\": [x, y], \"via\"?: bool, \"layer\"?: name}");
-            tr::Waypoint wp;
-            wp.point = point_param(*opt(x, "point"), where + ".point");
-            wp.via = opt_bool(x, "via", false);
-            if (wp.via && b.layers.size() < 2) // review R-6: index 0 is both F_Cu and B_Cu there
-                bad_params(where + ": a via needs a board with at least two copper layers");
-            if (wp.via) {
-                const tj::Value* l = opt(x, "layer");
-                if (!l)
-                    bad_params(where + ": a via waypoint names the \"layer\" to continue on");
-                wp.layer_after = layer_param(*l, b, where + ".layer");
-            }
-            r.waypoints.push_back(wp);
-        }
-    }
+    r.waypoints = waypoints_param(p, b);
     if (!r.end && r.waypoints.empty())
         bad_params("a route needs an \"end\" or at least one waypoint");
     r.width = opt_size(p, "width");
@@ -356,6 +244,38 @@ tj::Value do_load(const tj::Value& p)
     return r;
 }
 
+tj::Value do_route_pair(const tj::Value& p)
+{
+    const tr::Board& b = need_board();
+    return proposal_result(tr::run_route_pair(b, parse_route_pair(p, b)), b);
+}
+
+const char* tune_status(tr::TuneStatus s)
+{
+    switch (s) {
+    case tr::TuneStatus::Tuned: return "tuned";
+    case tr::TuneStatus::TooLong: return "too_long";
+    case tr::TuneStatus::TooShort: return "too_short";
+    }
+    return "too_short";
+}
+
+tj::Value do_tune(const tj::Value& p)
+{
+    const tr::Board& b = need_board();
+    const tr::TuneRequest rq = parse_tune(p);
+    const tr::TuneResult t = tr::run_tune(b, rq);
+    tj::Value r = proposal_result(t.proposal, b);
+    r.set("length", t.length);
+    if (rq.aim == tr::Aim::Skew)
+        r.set("skew", t.skew);
+    r.set("status", tune_status(t.status));
+    return r;
+}
+
+// Every method a client may call, in PROTOCOL.md's order (`ping.methods`).
+constexpr const char* METHODS[] = {"ping", "stats", "load_board", "route", "drag", "apply", "route_pair", "tune"};
+
 tj::Value do_ping()
 {
     tj::Value r = tj::obj();
@@ -363,6 +283,10 @@ tj::Value do_ping()
     r.set("service", "typmax-router");
     r.set("version", SERVICE_VERSION);
     r.set("engine", engine_json());
+    tj::Value m = tj::arr();
+    for (const char* name : METHODS)
+        m.push(name);
+    r.set("methods", m);
     return r;
 }
 
@@ -393,6 +317,10 @@ tj::Value dispatch(const std::string& method, const tj::Value& params)
         return do_drag(params);
     if (method == "apply")
         return do_apply(params);
+    if (method == "route_pair")
+        return do_route_pair(params);
+    if (method == "tune")
+        return do_tune(params);
     if (g_test_hooks && method == "__test_crash__")
         std::raise(SIGSEGV); // the internal_crash path, end to end (tests/run_tests.py)
     throw tr::RequestError("unknown_method", "unknown method \"" + method + "\"");
@@ -579,7 +507,7 @@ void handle_line(const std::string& line)
                     elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
                     if (timing && result.is_object()) {
                         result.set("elapsed_ms", elapsed);
-                        if (method == "route" || method == "drag")
+                        if (method == "route" || method == "drag" || method == "route_pair" || method == "tune")
                             result.set("world_ms", tr::g_last_world_ms);
                     }
                     response = envelope(id);
