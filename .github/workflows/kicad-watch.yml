@@ -210,7 +210,7 @@ jobs:
   macos-gate:
     needs: [check, update]
     if: needs.update.outputs.skip == '0' && needs.update.outputs.pr != ''
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     permissions:
       contents: read
@@ -235,7 +235,7 @@ jobs:
           if cmp -s macos-golden.jsonl "reports/kicad-$TAG.docker-golden.jsonl"; then dsame=yes; else dsame=no; fi
           set -e
           {
-            echo "### macOS arm64 gate (macos-14)"
+            echo "### macOS arm64 gate (macos-15)"
             echo
             echo "- build: exit $brc"
             echo "- determinism within/across processes: exit $drc"

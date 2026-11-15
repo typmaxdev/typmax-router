@@ -274,7 +274,7 @@ def t_workflow():
     check("docker-golden.jsonl" in jobs.get("macos-gate", ""), "the macOS gate compares with the docker lines")
     check("cancel-in-progress: false" in wf, "concurrency without cancel")
     check(re.findall(r"secrets\.(\w+)", wf) == [], "no secrets beyond github.token")
-    check("runs-on: macos-14" in wf and "gh pr comment" in wf, "the macOS gate comments on the PR")
+    check("runs-on: macos-15" in wf and "gh pr comment" in wf, "the macOS gate comments on the PR")
     check("gh issue create" in wf and "port needed" in wf, "a major release opens an issue")
     for f in ("tools/kicad_watch.sh", "README.md", "MAINTAINING.md"):
         check("osascript" not in (ROOT / f).read_text(), f"{f}: no desktop notification")
